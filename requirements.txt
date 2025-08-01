@@ -1,0 +1,6 @@
+python-can
+cantools
+zmq
+datetime
+PyQt6 
+pyqtgraph

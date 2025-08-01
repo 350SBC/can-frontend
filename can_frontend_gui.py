@@ -1,0 +1,468 @@
+import sys
+import os
+import time
+from datetime import datetime
+import json
+import zmq
+
+# PyQt6 imports
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QLineEdit, QFileDialog, QTextEdit, QTableWidget,
+    QTableWidgetItem, QHeaderView, QSizePolicy, QComboBox, QMessageBox,
+    QFormLayout, QGridLayout, QScrollArea
+)
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, Qt, QTimer
+
+# Import for plotting (install with: pip install pyqtgraph)
+import pyqtgraph as pg
+
+# ZeroMQ Ports and Backend IP
+BACKEND_IP = "pi4" # !!! IMPORTANT: CHANGE THIS TO THE ACTUAL IP OF YOUR BACKEND MACHINE !!!
+PUB_PORT = "5556"        # Port for receiving CAN messages (from backend's PUB socket)
+REQ_REP_PORT = "5557"    # Port for sending commands and receiving responses (to backend's REP socket)
+
+# --- Worker for ZeroMQ Communication (Frontend side) ---
+class ZMQWorker(QObject):
+    # Signals to send received data/status/errors to the main GUI thread
+    decoded_message_received = pyqtSignal(dict) # Data dictionary for decoded message
+    raw_message_received = pyqtSignal(dict)     # Data dictionary for raw message
+    backend_status_message = pyqtSignal(str)    # General status updates from worker
+    backend_error_message = pyqtSignal(str)     # Error messages from worker
+    new_signal_value = pyqtSignal(str, float)   # signal_name, value (for plotting)
+
+    def __init__(self, backend_ip, pub_port, req_rep_port):
+        super().__init__()
+        self.backend_ip = backend_ip
+        self.pub_port = pub_port
+        self.req_rep_port = req_rep_port
+
+        self.context = zmq.Context()
+        self.pub_socket = None # ZeroMQ SUB socket (subscriber to backend's PUB)
+        self.req_socket = None # ZeroMQ REQ socket (requester to backend's REP)
+        self._listening = False # Flag to control the message reception loop
+
+    def connect_sockets(self):
+        """Connects frontend ZeroMQ sockets to the backend."""
+        try:
+            # Subscriber socket for CAN messages
+            if self.pub_socket:
+                self.pub_socket.disconnect(f"tcp://{self.backend_ip}:{self.pub_port}")
+                self.pub_socket.close()
+            self.pub_socket = self.context.socket(zmq.SUB)
+            # --- ZeroMQ SUB: Connect to backend's PUB ---
+            self.pub_socket.connect(f"tcp://{self.backend_ip}:{self.pub_port}")
+            self.pub_socket.setsockopt_string(zmq.SUBSCRIBE, "") # Subscribe to ALL messages
+            self.backend_status_message.emit(f"Connected to Backend PUB on {self.backend_ip}:{self.pub_port}")
+
+            # Requester socket for commands
+            if self.req_socket:
+                self.req_socket.disconnect(f"tcp://{self.backend_ip}:{self.req_rep_port}")
+                self.req_socket.close()
+            self.req_socket = self.context.socket(zmq.REQ)
+            # --- ZeroMQ REQ: Connect to backend's REP ---
+            self.req_socket.connect(f"tcp://{self.backend_ip}:{self.req_rep_port}")
+            self.backend_status_message.emit(f"Connected to Backend REQ/REP on {self.backend_ip}:{self.req_rep_port}")
+
+            self._listening = True
+            # Start the message reception loop in this worker's thread
+            QTimer.singleShot(0, self.start_listening_loop) # Schedule call once thread is fully running
+            return True
+        except zmq.ZMQError as e:
+            self.backend_error_message.emit(f"Failed to connect to backend: {e}")
+            self._listening = False
+            return False
+
+    def start_listening_loop(self):
+        """Continuously receives messages from the backend's PUB socket."""
+        # This loop runs in the ZMQWorker's separate QThread
+        while self._listening:
+            try:
+                # Use poll to non-blockingly check for messages, allowing graceful shutdown
+                if self.pub_socket.poll(100) & zmq.POLLIN: # 100ms timeout
+                    message = self.pub_socket.recv_json() # Receive JSON message
+                    msg_type = message.get("type")
+                    if msg_type == "decoded":
+                        self.decoded_message_received.emit(message) # Emit signal for decoded data
+                        # Also emit individual signals for plotting
+                        for signal_name, value in message['data'].items():
+                            self.new_signal_value.emit(signal_name, float(value))
+                    elif msg_type == "raw":
+                        self.raw_message_received.emit(message) # Emit signal for raw data
+                else:
+                    pass # No message, continue loop (check self._listening flag)
+            except zmq.ZMQError as e:
+                self.backend_error_message.emit(f"ZeroMQ error during receive: {e}")
+                self._listening = False # Stop listening on error
+                break
+            except json.JSONDecodeError as e:
+                self.backend_error_message.emit(f"JSON decode error from backend: {e}")
+            except Exception as e:
+                self.backend_error_message.emit(f"Unexpected error in ZMQ listener: {e}")
+                self._listening = False
+                break
+        self.backend_status_message.emit("ZMQ listener stopped.")
+
+
+    def send_command(self, command, args=None):
+        """Sends a command to the backend via ZeroMQ REQ socket and waits for a response."""
+        if not self.req_socket:
+            self.backend_error_message.emit("Not connected to backend command socket.")
+            return {"status": "error", "message": "Not connected to backend."}
+
+        try:
+            message = {"command": command, "args": args if args is not None else {}}
+            # --- ZeroMQ REQ: Send command ---
+            self.req_socket.send_json(message)
+            # --- ZeroMQ REQ: Receive synchronous response ---
+            response = self.req_socket.recv_json()
+            return response
+        except zmq.ZMQError as e:
+            self.backend_error_message.emit(f"ZeroMQ error sending command '{command}': {e}")
+            return {"status": "error", "message": f"Network error: {e}"}
+        except Exception as e:
+            self.backend_error_message.emit(f"Error sending command '{command}': {e}")
+            return {"status": "error", "message": f"Client error: {e}"}
+
+    def stop_listening(self):
+        """Stops the ZeroMQ message reception loop and closes sockets."""
+        self._listening = False
+        self.backend_status_message.emit("Stopping ZMQ listener...")
+        # Close and disconnect sockets cleanly
+        if self.pub_socket:
+            self.pub_socket.disconnect(f"tcp://{self.backend_ip}:{self.pub_port}")
+            self.pub_socket.close()
+            self.pub_socket = None
+        if self.req_socket:
+            self.req_socket.disconnect(f"tcp://{self.backend_ip}:{self.req_rep_port}")
+            self.req_socket.close()
+            self.req_socket = None
+        self.backend_status_message.emit("ZMQ sockets disconnected.")
+        # Request the QThread containing this worker to quit
+        # self.thread().quit() # This line caused issues, removed for safer shutdown via QThread.wait() in main window
+
+# --- Main Application Window ---
+class CANDashboardFrontend(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("CAN Dashboard Frontend")
+        self.setGeometry(100, 100, 1400, 900) # Initial window size
+
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QVBoxLayout(self.central_widget)
+
+        # Initialize ZMQWorker and move to a QThread
+        self.zmq_worker = ZMQWorker(BACKEND_IP, PUB_PORT, REQ_REP_PORT)
+        self.zmq_thread = QThread()
+        self.zmq_worker.moveToThread(self.zmq_thread)
+
+        # Connect signals from the ZMQWorker to slots in the main GUI thread
+        self.zmq_worker.decoded_message_received.connect(self.update_decoded_messages_table)
+        self.zmq_worker.raw_message_received.connect(self.update_raw_messages_table)
+        self.zmq_worker.backend_status_message.connect(self.update_status_bar)
+        self.zmq_worker.backend_error_message.connect(self.display_error)
+        self.zmq_worker.new_signal_value.connect(self.update_plot_data)
+
+        # Start the worker thread (it will then wait for connect_sockets call)
+        self.zmq_thread.start()
+
+        self._init_ui() # Setup the graphical user interface elements
+        self._init_plotting() # Setup plotting area with PyQtGraph
+        self.update_status_bar("Frontend started. Connect to backend.")
+
+        self.plot_data = {} # Dictionary to store data for plots
+        self.max_plot_points = 500 # Max data points to show in plots for performance
+
+    def _init_ui(self):
+        # --- Top Section: Backend Connection & DBC/CAN Commands ---
+        config_layout = QHBoxLayout()
+
+        # Backend Connection Settings
+        backend_conn_group = QVBoxLayout()
+        backend_conn_group.addWidget(QLabel("Backend IP:"))
+        self.backend_ip_line_edit = QLineEdit(BACKEND_IP)
+        backend_conn_group.addWidget(self.backend_ip_line_edit)
+        self.connect_backend_button = QPushButton("Connect to Backend")
+        self.connect_backend_button.clicked.connect(self.connect_to_backend)
+        backend_conn_group.addWidget(self.connect_backend_button)
+        self.disconnect_backend_button = QPushButton("Disconnect Backend")
+        self.disconnect_backend_button.clicked.connect(self.disconnect_from_backend)
+        self.disconnect_backend_button.setEnabled(False) # Disabled initially
+        backend_conn_group.addWidget(self.disconnect_backend_button)
+        config_layout.addLayout(backend_conn_group)
+
+        config_layout.addStretch(1)
+
+        # DBC File & CAN Bus Configuration Commands (sent to backend)
+        backend_cmds_group = QFormLayout()
+        self.dbc_path_line_edit = QLineEdit("test.dbc") # This path is on the BACKEND machine
+        backend_cmds_group.addRow("Backend DBC Path:", self.dbc_path_line_edit)
+        self.load_dbc_button = QPushButton("Load DBC (Backend)")
+        self.load_dbc_button.clicked.connect(self.send_load_dbc_command)
+        backend_cmds_group.addRow(self.load_dbc_button)
+
+        self.interface_combo = QComboBox()
+        self.interface_combo.addItems(['socketcan', 'virtual', 'pcan', 'vector', 'kvaser'])
+        self.interface_combo.setCurrentText('socketcan')
+        backend_cmds_group.addRow("Backend Interface:", self.interface_combo)
+
+        self.channel_line_edit = QLineEdit("vcan0")
+        backend_cmds_group.addRow("Backend Channel:", self.channel_line_edit)
+
+        self.bitrate_line_edit = QLineEdit("500000")
+        backend_cmds_group.addRow("Backend Bitrate:", self.bitrate_line_edit)
+
+        self.connect_can_button = QPushButton("Connect CAN (Backend)")
+        self.connect_can_button.clicked.connect(self.send_connect_can_command)
+        backend_cmds_group.addRow(self.connect_can_button)
+
+        self.disconnect_can_button = QPushButton("Disconnect CAN (Backend)")
+        self.disconnect_can_button.clicked.connect(self.send_disconnect_can_command)
+        self.disconnect_can_button.setEnabled(False)
+        backend_cmds_group.addRow(self.disconnect_can_button)
+
+        config_layout.addLayout(backend_cmds_group)
+
+        self.main_layout.addLayout(config_layout)
+        self.main_layout.addStretch(1)
+
+        # --- Middle Section: Data Display (Table for messages) ---
+        self.message_table = QTableWidget()
+        self.message_table.setColumnCount(4)
+        self.message_table.setHorizontalHeaderLabels(["Timestamp", "ID", "Message Name", "Signals"])
+        self.message_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.message_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.message_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.message_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.message_table.verticalHeader().setVisible(False)
+        self.message_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.message_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.main_layout.addWidget(QLabel("Live CAN Messages:"))
+        self.main_layout.addWidget(self.message_table)
+
+        # --- Plotting Area ---
+        self.plot_widget = pg.GraphicsLayoutWidget(parent=self)
+        self.plot_widget.ci.layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.addWidget(self.plot_widget)
+        self.main_layout.addWidget(QLabel("Live Signal Plots (Max 4 for now):"))
+
+        # --- Send Message Section (Optional) ---
+        send_message_group = QFormLayout()
+        self.message_name_to_send_edit = QLineEdit()
+        send_message_group.addRow("Message Name to Send:", self.message_name_to_send_edit)
+        self.signal_data_to_send_edit = QLineEdit("{}") # JSON format for signal data
+        send_message_group.addRow("Signal Data (JSON):", self.signal_data_to_send_edit)
+        self.send_can_button = QPushButton("Send CAN Message (Backend)")
+        self.send_can_button.clicked.connect(self.send_can_message_command)
+        send_message_group.addRow(self.send_can_button)
+        self.main_layout.addLayout(send_message_group)
+
+
+        # --- Status Bar ---
+        self.statusBar = self.statusBar()
+        self.statusBar.showMessage("Ready")
+
+    def _init_plotting(self):
+        # Dictionary to hold PyQtGraph PlotItem objects
+        self.plots = {} # {signal_name: PlotItem}
+        # Keep track of where to add new plots in the grid layout
+        self.current_plot_row = 0
+        self.current_plot_col = 0
+        self.max_plots_per_row = 2
+        self.max_plot_rows = 2
+
+    def connect_to_backend(self):
+        """Initiates connection to the ZeroMQ backend."""
+        backend_ip = self.backend_ip_line_edit.text()
+        self.zmq_worker.backend_ip = backend_ip # Update worker's IP if changed in GUI
+        # Schedule the connect_sockets call to run in the worker's thread
+        QTimer.singleShot(0, self.zmq_worker.connect_sockets)
+        self.connect_backend_button.setEnabled(False)
+        self.disconnect_backend_button.setEnabled(True)
+
+    def disconnect_from_backend(self):
+        """Initiates disconnection from the ZeroMQ backend."""
+        # Schedule the stop_listening call to run in the worker's thread
+        QTimer.singleShot(0, self.zmq_worker.stop_listening)
+        self.connect_backend_button.setEnabled(True)
+        self.disconnect_backend_button.setEnabled(False)
+        # Also disable CAN related buttons, as they won't work without backend
+        self.disconnect_can_button.setEnabled(False)
+        self.connect_can_button.setEnabled(True)
+
+
+    def send_load_dbc_command(self):
+        """Sends command to backend to load DBC."""
+        file_path = self.dbc_path_line_edit.text()
+        # Call send_command method in the worker thread via QTimer.singleShot
+        # The result will be processed by handle_backend_response
+        response = self.zmq_worker.send_command("load_dbc", {"file_path": file_path})
+        self.handle_backend_response(response, "Load DBC")
+
+    def send_connect_can_command(self):
+        """Sends command to backend to connect to CAN bus."""
+        interface = self.interface_combo.currentText()
+        channel = self.channel_line_edit.text()
+        try:
+            bitrate = int(self.bitrate_line_edit.text())
+        except ValueError:
+            self.display_error("Bitrate must be an integer.")
+            return
+
+        response = self.zmq_worker.send_command("connect_can", {
+            "interface": interface,
+            "channel": channel,
+            "bitrate": bitrate
+        })
+        self.handle_backend_response(response, "Connect CAN")
+        if response.get("status") == "success":
+            self.connect_can_button.setEnabled(False)
+            self.disconnect_can_button.setEnabled(True)
+
+    def send_disconnect_can_command(self):
+        """Sends command to backend to disconnect from CAN bus."""
+        response = self.zmq_worker.send_command("disconnect_can")
+        self.handle_backend_response(response, "Disconnect CAN")
+        if response.get("status") == "success":
+            self.connect_can_button.setEnabled(True)
+            self.disconnect_can_button.setEnabled(False)
+
+    def send_can_message_command(self):
+        """Sends command to backend to send a CAN message."""
+        msg_name = self.message_name_to_send_edit.text()
+        signal_data_str = self.signal_data_to_send_edit.text()
+        try:
+            signal_data = json.loads(signal_data_str)
+            if not isinstance(signal_data, dict):
+                raise ValueError("Signal data must be a JSON object (dictionary).")
+        except json.JSONDecodeError:
+            self.display_error("Invalid JSON format for Signal Data.")
+            return
+        except ValueError as e:
+            self.display_error(str(e))
+            return
+
+        response = self.zmq_worker.send_command("send_can_message", {
+            "message_name": msg_name,
+            "signal_data": signal_data
+        })
+        self.handle_backend_response(response, "Send CAN Message")
+
+
+    def handle_backend_response(self, response, command_name="Command"):
+        """Processes responses received from the backend for commands."""
+        status = response.get("status", "unknown")
+        message = response.get("message", "No message provided.")
+        if status == "success":
+            self.update_status_bar(f"{command_name} successful: {message}")
+        else:
+            self.display_error(f"{command_name} failed: {message}")
+
+    def update_decoded_messages_table(self, message_data):
+        """Slot to update the table with decoded CAN messages."""
+        row_position = self.message_table.rowCount()
+        self.message_table.insertRow(row_position)
+
+        timestamp = message_data.get("timestamp")
+        id_hex = message_data.get("id_hex")
+        message_name = message_data.get("name")
+        decoded_data = message_data.get("data", {})
+
+        ts_item = QTableWidgetItem(datetime.fromtimestamp(timestamp).strftime('%H:%M:%S.%f')[:-3])
+        id_item = QTableWidgetItem(id_hex)
+        name_item = QTableWidgetItem(message_name)
+
+        signals_str = ", ".join([f"{name}: {value:.2f}" if isinstance(value, (int, float)) else f"{name}: {value}"
+                                 for name, value in decoded_data.items()])
+        signals_item = QTableWidgetItem(signals_str)
+
+        self.message_table.setItem(row_position, 0, ts_item)
+        self.message_table.setItem(row_position, 1, id_item)
+        self.message_table.setItem(row_position, 2, name_item)
+        self.message_table.setItem(row_position, 3, signals_item)
+
+        self.message_table.scrollToBottom()
+
+    def update_raw_messages_table(self, message_data):
+        """Slot to update the table with raw (unknown) CAN messages."""
+        row_position = self.message_table.rowCount()
+        self.message_table.insertRow(row_position)
+
+        timestamp = message_data.get("timestamp")
+        id_hex = message_data.get("id_hex")
+        data_hex = message_data.get("data_hex")
+
+        ts_item = QTableWidgetItem(datetime.fromtimestamp(timestamp).strftime('%H:%M:%S.%f')[:-3])
+        id_item = QTableWidgetItem(id_hex)
+        name_item = QTableWidgetItem("UNKNOWN MESSAGE (RAW)")
+        raw_data_item = QTableWidgetItem(f"Raw Data: {data_hex}")
+
+        self.message_table.setItem(row_position, 0, ts_item)
+        self.message_table.setItem(row_position, 1, id_item)
+        self.message_table.setItem(row_position, 2, name_item)
+        self.message_table.setItem(row_position, 3, raw_data_item)
+        self.message_table.scrollToBottom()
+
+
+    def update_status_bar(self, message):
+        """Updates the application's status bar."""
+        self.statusBar.showMessage(message)
+
+    def display_error(self, message):
+        """Displays an error message using a QMessageBox and updates status bar."""
+        QMessageBox.warning(self, "Error", message)
+        self.statusBar.showMessage(f"ERROR: {message}", 5000)
+
+    def update_plot_data(self, signal_name, value):
+        """Slot to update live signal plots with new data."""
+        current_time = time.time()
+
+        if signal_name not in self.plot_data:
+            total_plots = len(self.plots)
+            if total_plots >= self.max_plots_per_row * self.max_plot_rows:
+                return # Max plots reached, don't create new ones
+
+            # Create a new plot for this signal in the PyQtGraph layout
+            plot_item = self.plot_widget.addPlot(row=self.current_plot_row, col=self.current_plot_col, title=signal_name)
+            plot_item.setLabel('bottom', "Time", units='s')
+            plot_item.setLabel('left', "Value")
+            plot_item.showGrid(x=True, y=True)
+            plot_curve = plot_item.plot(pen='y') # Get the PlotDataItem for updating
+
+            # Store references to data and curve
+            self.plot_data[signal_name] = {'time': [], 'value': [], 'curve': plot_curve, 'start_time': current_time}
+            self.plots[signal_name] = plot_item # Store the plot item itself
+
+            # Move to the next position in the plot grid
+            self.current_plot_col += 1
+            if self.current_plot_col >= self.max_plots_per_row:
+                self.current_plot_col = 0
+                self.current_plot_row += 1
+
+        data_entry = self.plot_data[signal_name]
+        data_entry['time'].append(current_time - data_entry['start_time']) # Time relative to plot start
+        data_entry['value'].append(value)
+
+        # Keep only the most recent 'max_plot_points' for performance
+        if len(data_entry['time']) > self.max_plot_points:
+            data_entry['time'] = data_entry['time'][-self.max_plot_points:]
+            data_entry['value'] = data_entry['value'][-self.max_plot_points:]
+
+        # Update the plot with new data
+        data_entry['curve'].setData(data_entry['time'], data_entry['value'])
+
+    def closeEvent(self, event):
+        """Handles the application close event for graceful shutdown."""
+        # Ensure the ZMQ worker thread and its sockets are properly stopped
+        self.zmq_worker.stop_listening()
+        self.zmq_thread.quit() # Request the QThread to stop its event loop
+        self.zmq_thread.wait(2000) # Wait up to 2 seconds for the thread to finish cleanly
+        super().closeEvent(event) # Call base class close event
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = CANDashboardFrontend()
+    window.show()
+    sys.exit(app.exec())
