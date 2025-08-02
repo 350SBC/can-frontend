@@ -171,10 +171,49 @@ class CANDashboardFrontend(QMainWindow):
 
         self._init_ui() # Setup the graphical user interface elements
         self._init_plotting() # Setup plotting area with PyQtGraph
-        self.update_status_bar("Frontend started. Connect to backend.")
+        
+        # Auto-connect and configure everything
+        self.auto_connect_and_configure()
 
         self.plot_data = {} # Dictionary to store data for plots
         self.max_plot_points = 500 # Max data points to show in plots for performance
+
+    def auto_connect_and_configure(self):
+        """Automatically connects to the backend and configures DBC and CAN connection."""
+        self.update_status_bar("Auto-connecting to backend...")
+        # Use a single-shot timer to ensure this runs after the UI is fully initialized
+        QTimer.singleShot(500, self._auto_setup_sequence)
+
+    def _auto_setup_sequence(self):
+        """Performs automatic setup sequence: connect to backend, load DBC, connect CAN."""
+        # First connect to backend
+        self.zmq_worker.backend_ip = BACKEND_IP
+        QTimer.singleShot(0, self.zmq_worker.connect_sockets)
+        self.update_status_bar("Connected to backend. Loading DBC...")
+        # Wait a moment then load DBC
+        QTimer.singleShot(1000, self._auto_load_dbc)
+
+    def _auto_load_dbc(self):
+        """Automatically loads the DBC file."""
+        response = self.zmq_worker.send_command("load_dbc", {"file_path": "dbc/test.dbc"})
+        if response.get("status") == "success":
+            self.update_status_bar("DBC loaded. Connecting to CAN...")
+            # Wait a moment then connect to CAN
+            QTimer.singleShot(1000, self._auto_connect_can)
+        else:
+            self.update_status_bar(f"Failed to load DBC: {response.get('message', 'Unknown error')}")
+
+    def _auto_connect_can(self):
+        """Automatically connects to the CAN bus."""
+        response = self.zmq_worker.send_command("connect_can", {
+            "interface": "socketcan",
+            "channel": "vcan0", 
+            "bitrate": 500000
+        })
+        if response.get("status") == "success":
+            self.update_status_bar("CAN connected. Ready to receive messages.")
+        else:
+            self.update_status_bar(f"Failed to connect to CAN: {response.get('message', 'Unknown error')}")
 
     def _init_ui(self):
         # --- Top Section: Backend Connection & DBC/CAN Commands ---
@@ -246,6 +285,7 @@ class CANDashboardFrontend(QMainWindow):
         # --- Plotting Area ---
         self.plot_widget = pg.GraphicsLayoutWidget(parent=self)
         self.plot_widget.ci.layout.setContentsMargins(0, 0, 0, 0)
+        self.plot_widget.height = 700
         self.main_layout.addWidget(self.plot_widget)
         self.main_layout.addWidget(QLabel("Live Signal Plots (Max 4 for now):"))
 
@@ -255,11 +295,10 @@ class CANDashboardFrontend(QMainWindow):
         send_message_group.addRow("Message Name to Send:", self.message_name_to_send_edit)
         self.signal_data_to_send_edit = QLineEdit("{}") # JSON format for signal data
         send_message_group.addRow("Signal Data (JSON):", self.signal_data_to_send_edit)
-        self.send_can_button = QPushButton("Send CAN Message (Backend)")
+        self.send_can_button = QPushButton("Send CAN Message")
         self.send_can_button.clicked.connect(self.send_can_message_command)
         send_message_group.addRow(self.send_can_button)
         self.main_layout.addLayout(send_message_group)
-
 
         # --- Status Bar ---
         self.statusBar = self.statusBar()
@@ -271,8 +310,8 @@ class CANDashboardFrontend(QMainWindow):
         # Keep track of where to add new plots in the grid layout
         self.current_plot_row = 0
         self.current_plot_col = 0
-        self.max_plots_per_row = 2
-        self.max_plot_rows = 2
+        self.max_plots_per_row = 3
+        self.max_plot_rows = 3
 
     def connect_to_backend(self):
         """Initiates connection to the ZeroMQ backend."""
