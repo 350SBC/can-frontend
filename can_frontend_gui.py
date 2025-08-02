@@ -168,6 +168,14 @@ class CANDashboardFrontend(QMainWindow):
 
         # Start the worker thread (it will then wait for connect_sockets call)
         self.zmq_thread.start()
+        
+        # Initialize message buffering for table updates
+        self.message_buffer = []
+        self.max_buffer_size = 50 # Or whatever makes sense for your message rate
+        self.table_update_timer = QTimer(self)
+        self.table_update_timer.setInterval(50) # Update table every 50ms (adjust as needed)
+        self.table_update_timer.timeout.connect(self._flush_message_buffer)
+        self.table_update_timer.start()
 
         self._init_ui() # Setup the graphical user interface elements
         self._init_plotting() # Setup plotting area with PyQtGraph
@@ -285,7 +293,7 @@ class CANDashboardFrontend(QMainWindow):
         # --- Plotting Area ---
         self.plot_widget = pg.GraphicsLayoutWidget(parent=self)
         self.plot_widget.ci.layout.setContentsMargins(0, 0, 0, 0)
-        self.plot_widget.height = 700
+        self.plot_widget.setMinimumHeight(900)  # Larger minimum height
         self.main_layout.addWidget(self.plot_widget)
         self.main_layout.addWidget(QLabel("Live Signal Plots (Max 4 for now):"))
 
@@ -400,8 +408,35 @@ class CANDashboardFrontend(QMainWindow):
         else:
             self.display_error(f"{command_name} failed: {message}")
 
+    def _flush_message_buffer(self):
+        """Flushes buffered messages to the table for better performance."""
+        if not self.message_buffer:
+            return
+        
+        for message_data in self.message_buffer:
+            msg_type = message_data.get("type")
+            if msg_type == "decoded":
+                self._add_decoded_message_to_table(message_data)
+            elif msg_type == "raw":
+                self._add_raw_message_to_table(message_data)
+        
+        self.message_buffer.clear()
+        self.message_table.scrollToBottom()
+
     def update_decoded_messages_table(self, message_data):
-        """Slot to update the table with decoded CAN messages."""
+        """Slot to buffer decoded CAN messages for batch table updates."""
+        self.message_buffer.append(message_data)
+        if len(self.message_buffer) >= self.max_buffer_size:
+            self._flush_message_buffer()
+
+    def update_raw_messages_table(self, message_data):
+        """Slot to buffer raw CAN messages for batch table updates."""
+        self.message_buffer.append(message_data)
+        if len(self.message_buffer) >= self.max_buffer_size:
+            self._flush_message_buffer()
+
+    def _add_decoded_message_to_table(self, message_data):
+        """Adds a decoded message to the table."""
         row_position = self.message_table.rowCount()
         self.message_table.insertRow(row_position)
 
@@ -423,10 +458,8 @@ class CANDashboardFrontend(QMainWindow):
         self.message_table.setItem(row_position, 2, name_item)
         self.message_table.setItem(row_position, 3, signals_item)
 
-        self.message_table.scrollToBottom()
-
-    def update_raw_messages_table(self, message_data):
-        """Slot to update the table with raw (unknown) CAN messages."""
+    def _add_raw_message_to_table(self, message_data):
+        """Adds a raw message to the table."""
         row_position = self.message_table.rowCount()
         self.message_table.insertRow(row_position)
 
