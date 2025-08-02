@@ -81,6 +81,7 @@ class ZMQWorker(QObject):
                 # Use poll to non-blockingly check for messages, allowing graceful shutdown
                 if self.pub_socket.poll(100) & zmq.POLLIN: # 100ms timeout
                     message = self.pub_socket.recv_json() # Receive JSON message
+                    #print(f"Frontend worker received: {message.get('id_hex', 'N/A')}") # <-- ADD THIS
                     msg_type = message.get("type")
                     if msg_type == "decoded":
                         self.decoded_message_received.emit(message) # Emit signal for decoded data
@@ -143,6 +144,7 @@ class ZMQWorker(QObject):
 
 # --- Main Application Window ---
 class CANDashboardFrontend(QMainWindow):
+    
     def __init__(self):
         super().__init__()
         self.setWindowTitle("CAN Dashboard Frontend")
@@ -196,7 +198,7 @@ class CANDashboardFrontend(QMainWindow):
 
         # DBC File & CAN Bus Configuration Commands (sent to backend)
         backend_cmds_group = QFormLayout()
-        self.dbc_path_line_edit = QLineEdit("test.dbc") # This path is on the BACKEND machine
+        self.dbc_path_line_edit = QLineEdit("dbc/test.dbc") # This path is on the BACKEND machine
         backend_cmds_group.addRow("Backend DBC Path:", self.dbc_path_line_edit)
         self.load_dbc_button = QPushButton("Load DBC (Backend)")
         self.load_dbc_button.clicked.connect(self.send_load_dbc_command)
