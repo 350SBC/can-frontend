@@ -148,7 +148,7 @@ class CANDashboardFrontend(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("CAN Dashboard Frontend")
-        self.setGeometry(100, 100, 1400, 900) # Initial window size
+        self.setGeometry(10, 10, 1400, 900) # Initial window size
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -224,58 +224,6 @@ class CANDashboardFrontend(QMainWindow):
             self.update_status_bar(f"Failed to connect to CAN: {response.get('message', 'Unknown error')}")
 
     def _init_ui(self):
-        # --- Top Section: Backend Connection & DBC/CAN Commands ---
-        config_layout = QHBoxLayout()
-
-        # Backend Connection Settings
-        backend_conn_group = QVBoxLayout()
-        backend_conn_group.addWidget(QLabel("Backend IP:"))
-        self.backend_ip_line_edit = QLineEdit(BACKEND_IP)
-        backend_conn_group.addWidget(self.backend_ip_line_edit)
-        self.connect_backend_button = QPushButton("Connect to Backend")
-        self.connect_backend_button.clicked.connect(self.connect_to_backend)
-        backend_conn_group.addWidget(self.connect_backend_button)
-        self.disconnect_backend_button = QPushButton("Disconnect Backend")
-        self.disconnect_backend_button.clicked.connect(self.disconnect_from_backend)
-        self.disconnect_backend_button.setEnabled(False) # Disabled initially
-        backend_conn_group.addWidget(self.disconnect_backend_button)
-        config_layout.addLayout(backend_conn_group)
-
-        config_layout.addStretch(1)
-
-        # DBC File & CAN Bus Configuration Commands (sent to backend)
-        backend_cmds_group = QFormLayout()
-        self.dbc_path_line_edit = QLineEdit("dbc/test.dbc") # This path is on the BACKEND machine
-        backend_cmds_group.addRow("Backend DBC Path:", self.dbc_path_line_edit)
-        self.load_dbc_button = QPushButton("Load DBC (Backend)")
-        self.load_dbc_button.clicked.connect(self.send_load_dbc_command)
-        backend_cmds_group.addRow(self.load_dbc_button)
-
-        self.interface_combo = QComboBox()
-        self.interface_combo.addItems(['socketcan', 'virtual', 'pcan', 'vector', 'kvaser'])
-        self.interface_combo.setCurrentText('socketcan')
-        backend_cmds_group.addRow("Backend Interface:", self.interface_combo)
-
-        self.channel_line_edit = QLineEdit("vcan0")
-        backend_cmds_group.addRow("Backend Channel:", self.channel_line_edit)
-
-        self.bitrate_line_edit = QLineEdit("500000")
-        backend_cmds_group.addRow("Backend Bitrate:", self.bitrate_line_edit)
-
-        self.connect_can_button = QPushButton("Connect CAN (Backend)")
-        self.connect_can_button.clicked.connect(self.send_connect_can_command)
-        backend_cmds_group.addRow(self.connect_can_button)
-
-        self.disconnect_can_button = QPushButton("Disconnect CAN (Backend)")
-        self.disconnect_can_button.clicked.connect(self.send_disconnect_can_command)
-        self.disconnect_can_button.setEnabled(False)
-        backend_cmds_group.addRow(self.disconnect_can_button)
-
-        config_layout.addLayout(backend_cmds_group)
-
-        self.main_layout.addLayout(config_layout)
-        self.main_layout.addStretch(1)
-
         # --- Middle Section: Data Display (Table for messages) ---
         self.message_table = QTableWidget()
         self.message_table.setColumnCount(4)
@@ -320,62 +268,6 @@ class CANDashboardFrontend(QMainWindow):
         self.current_plot_col = 0
         self.max_plots_per_row = 3
         self.max_plot_rows = 3
-
-    def connect_to_backend(self):
-        """Initiates connection to the ZeroMQ backend."""
-        backend_ip = self.backend_ip_line_edit.text()
-        self.zmq_worker.backend_ip = backend_ip # Update worker's IP if changed in GUI
-        # Schedule the connect_sockets call to run in the worker's thread
-        QTimer.singleShot(0, self.zmq_worker.connect_sockets)
-        self.connect_backend_button.setEnabled(False)
-        self.disconnect_backend_button.setEnabled(True)
-
-    def disconnect_from_backend(self):
-        """Initiates disconnection from the ZeroMQ backend."""
-        # Schedule the stop_listening call to run in the worker's thread
-        QTimer.singleShot(0, self.zmq_worker.stop_listening)
-        self.connect_backend_button.setEnabled(True)
-        self.disconnect_backend_button.setEnabled(False)
-        # Also disable CAN related buttons, as they won't work without backend
-        self.disconnect_can_button.setEnabled(False)
-        self.connect_can_button.setEnabled(True)
-
-
-    def send_load_dbc_command(self):
-        """Sends command to backend to load DBC."""
-        file_path = self.dbc_path_line_edit.text()
-        # Call send_command method in the worker thread via QTimer.singleShot
-        # The result will be processed by handle_backend_response
-        response = self.zmq_worker.send_command("load_dbc", {"file_path": file_path})
-        self.handle_backend_response(response, "Load DBC")
-
-    def send_connect_can_command(self):
-        """Sends command to backend to connect to CAN bus."""
-        interface = self.interface_combo.currentText()
-        channel = self.channel_line_edit.text()
-        try:
-            bitrate = int(self.bitrate_line_edit.text())
-        except ValueError:
-            self.display_error("Bitrate must be an integer.")
-            return
-
-        response = self.zmq_worker.send_command("connect_can", {
-            "interface": interface,
-            "channel": channel,
-            "bitrate": bitrate
-        })
-        self.handle_backend_response(response, "Connect CAN")
-        if response.get("status") == "success":
-            self.connect_can_button.setEnabled(False)
-            self.disconnect_can_button.setEnabled(True)
-
-    def send_disconnect_can_command(self):
-        """Sends command to backend to disconnect from CAN bus."""
-        response = self.zmq_worker.send_command("disconnect_can")
-        self.handle_backend_response(response, "Disconnect CAN")
-        if response.get("status") == "success":
-            self.connect_can_button.setEnabled(True)
-            self.disconnect_can_button.setEnabled(False)
 
     def send_can_message_command(self):
         """Sends command to backend to send a CAN message."""
