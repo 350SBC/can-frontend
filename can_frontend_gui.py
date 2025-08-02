@@ -1,5 +1,5 @@
 import sys
-import os
+import os  # Add this if not already present
 import time
 from datetime import datetime
 import json
@@ -78,6 +78,10 @@ class ZMQWorker(QObject):
         # This loop runs in the ZMQWorker's separate QThread
         while self._listening:
             try:
+                # Check if socket is still valid before using it
+                if not self.pub_socket or not self._listening:
+                    break
+                    
                 # Use poll to non-blockingly check for messages, allowing graceful shutdown
                 if self.pub_socket.poll(100) & zmq.POLLIN: # 100ms timeout
                     message = self.pub_socket.recv_json() # Receive JSON message
@@ -93,13 +97,16 @@ class ZMQWorker(QObject):
                 else:
                     pass # No message, continue loop (check self._listening flag)
             except zmq.ZMQError as e:
-                self.backend_error_message.emit(f"ZeroMQ error during receive: {e}")
+                if self._listening:  # Only emit error if we're still supposed to be listening
+                    self.backend_error_message.emit(f"ZeroMQ error during receive: {e}")
                 self._listening = False # Stop listening on error
                 break
             except json.JSONDecodeError as e:
-                self.backend_error_message.emit(f"JSON decode error from backend: {e}")
+                if self._listening:
+                    self.backend_error_message.emit(f"JSON decode error from backend: {e}")
             except Exception as e:
-                self.backend_error_message.emit(f"Unexpected error in ZMQ listener: {e}")
+                if self._listening:
+                    self.backend_error_message.emit(f"Unexpected error in ZMQ listener: {e}")
                 self._listening = False
                 break
         self.backend_status_message.emit("ZMQ listener stopped.")
@@ -129,18 +136,27 @@ class ZMQWorker(QObject):
         """Stops the ZeroMQ message reception loop and closes sockets."""
         self._listening = False
         self.backend_status_message.emit("Stopping ZMQ listener...")
-        # Close and disconnect sockets cleanly
-        if self.pub_socket:
-            self.pub_socket.disconnect(f"tcp://{self.backend_ip}:{self.pub_port}")
-            self.pub_socket.close()
-            self.pub_socket = None
-        if self.req_socket:
-            self.req_socket.disconnect(f"tcp://{self.backend_ip}:{self.req_rep_port}")
-            self.req_socket.close()
-            self.req_socket = None
-        self.backend_status_message.emit("ZMQ sockets disconnected.")
-        # Request the QThread containing this worker to quit
-        # self.thread().quit() # This line caused issues, removed for safer shutdown via QThread.wait() in main window
+        
+        try:
+            # Close and disconnect sockets cleanly
+            if self.pub_socket:
+                self.pub_socket.setsockopt(zmq.LINGER, 0)  # Don't wait for pending messages
+                self.pub_socket.close()
+                self.pub_socket = None
+                
+            if self.req_socket:
+                self.req_socket.setsockopt(zmq.LINGER, 0)  # Don't wait for pending messages
+                self.req_socket.close()
+                self.req_socket = None
+                
+            # Close the ZMQ context
+            if self.context:
+                self.context.term()
+                
+            self.backend_status_message.emit("ZMQ sockets disconnected.")
+            
+        except Exception as e:
+            self.backend_error_message.emit(f"Error during ZMQ shutdown: {e}")
 
 # --- Main Application Window ---
 class CANDashboardFrontend(QMainWindow):
@@ -420,12 +436,31 @@ class CANDashboardFrontend(QMainWindow):
 
     def closeEvent(self, event):
         """Handles the application close event for graceful shutdown."""
-        # Ensure the ZMQ worker thread and its sockets are properly stopped
-        self.zmq_worker.stop_listening()
-        self.zmq_thread.quit() # Request the QThread to stop its event loop
-        self.zmq_thread.wait(2000) # Wait up to 2 seconds for the thread to finish cleanly
-        super().closeEvent(event) # Call base class close event
-
+        try:
+            # Stop the table update timer first
+            if hasattr(self, 'table_update_timer'):
+                self.table_update_timer.stop()
+            
+            # Stop the ZMQ worker's listening loop
+            if hasattr(self, 'zmq_worker'):
+                self.zmq_worker.stop_listening()
+            
+            # Force quit the ZMQ thread immediately
+            if hasattr(self, 'zmq_thread'):
+                self.zmq_thread.quit()
+                # Wait briefly for clean shutdown
+                if not self.zmq_thread.wait(500):  # 500ms timeout
+                    print("Warning: ZMQ thread did not shut down cleanly, terminating...")
+                    self.zmq_thread.terminate()
+                    self.zmq_thread.wait(1000)  # Wait for termination
+            
+            # Accept the close event to allow the application to exit
+            event.accept()
+            
+        except Exception as e:
+            print(f"Error during shutdown: {e}")
+            # Force exit if something goes wrong
+            event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
