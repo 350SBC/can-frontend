@@ -1,0 +1,18 @@
+can-frontend/
+├── main.py
+├── config/
+│   └── settings.py
+├── widgets/
+│   ├── __init__.py
+│   ├── gauges.py
+│   ├── message_table.py
+│   └── plot_widget.py
+├── communication/
+│   ├── __init__.py
+│   └── zmq_worker.py
+├── gui/
+│   ├── __init__.py
+│   └── main_window.py
+└── utils/
+    ├── __init__.py
+    └── helpers.py
