@@ -10,14 +10,48 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                            QPushButton, QLabel, QLineEdit, QMessageBox, QFormLayout)
-from PyQt6.QtCore import QThread, QTimer
+                            QPushButton, QLabel, QLineEdit, QMessageBox, QFormLayout,
+                            QFrame)
+from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal
 import pyqtgraph as pg
 
 from communication.zmq_worker import ZMQWorker
 from widgets.gauges import RoundGauge, GaugeConfig
+from widgets.send_message_widget import CollapsibleSendMessageWidget  # Import the new widget
 # from widgets.message_table import MessageTableWidget  # Uncomment when ready
 from config.settings import *
+
+
+class CollapsibleWidget(QWidget):
+    """A widget that can be collapsed and expanded."""
+    
+    def __init__(self, title="", parent=None):
+        super().__init__(parent)
+        self.toggle_button = QPushButton(title)
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False)
+        self.toggle_button.clicked.connect(self.toggle)
+        
+        self.content_area = QWidget()
+        self.content_layout = QVBoxLayout(self.content_area)
+        
+        lay = QVBoxLayout(self)
+        lay.setSpacing(0)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.toggle_button)
+        lay.addWidget(self.content_area)
+        
+        self.toggle()  # Start collapsed
+
+    def toggle(self):
+        """Toggle the visibility of the content area."""
+        checked = self.toggle_button.isChecked()
+        self.toggle_button.setText("▼ Live Signal Plots" if checked else "▶ Live Signal Plots")
+        self.content_area.setVisible(checked)
+
+    def add_content_widget(self, widget):
+        """Add a widget to the content area."""
+        self.content_layout.addWidget(widget)
 
 
 class CANDashboardMainWindow(QMainWindow):
@@ -33,10 +67,10 @@ class CANDashboardMainWindow(QMainWindow):
         
         # Define gauge configurations
         self.gauge_configs = [
-            GaugeConfig("Engine RPM", 0, 8000, ["rpm", "engine_rpm", "engine_speed"], 9, "RPM"),
-            GaugeConfig("Speed", 0, 160, ["speed", "vehicle_speed", "mph"], 9, "MPH"),
-            GaugeConfig("Temperature", 60, 120, ["coolant_temp", "engine_temp", "temperature"], 7, "°C"),
-            GaugeConfig("Fuel Level", 0, 100, ["fuel_level", "fuel_percentage"], 6, "%"),
+            GaugeConfig("Engine RPM", 0, 6500, ["rpm", "engine_rpm", "engine_speed"], 10, "RPM"),
+            GaugeConfig("Speed", 0, 100, ["speed", "vehicle_speed", "mph"], 21, "MPH"),
+            GaugeConfig("Temperature", 60, 220, ["cts", "engine_temp", "temperature"], 7, "°f"),
+            GaugeConfig("AFR", 0, 20, ["afr", "air_fuel_ratio"], 6, ":1"),
             GaugeConfig("Battery Voltage", 10, 16, ["battery_voltage", "voltage"], 7, "V"),
         ]
         
@@ -71,7 +105,10 @@ class CANDashboardMainWindow(QMainWindow):
         
         self.zmq_worker.backend_status_message.connect(self.update_status_bar)
         self.zmq_worker.backend_error_message.connect(self.display_error)
-        self.zmq_worker.new_signal_value.connect(self.update_plot_data)
+        self.zmq_worker.new_signal_value.connect(self.update_display_data)
+        
+        # Connect the send message widget signal
+        self.send_message_widget.send_message_requested.connect(self.send_can_message_command)
 
     def _init_ui(self):
         """Initialize the user interface."""
@@ -105,27 +142,28 @@ class CANDashboardMainWindow(QMainWindow):
         self.main_layout.addLayout(gauge_layout)
 
     def _setup_plot_widget(self):
-        """Set up the plot widget."""
+        """Set up the plot widget as a collapsible widget."""
+        # Create collapsible container
+        self.plot_container = CollapsibleWidget("▶ Live Signal Plots")
+        
+        # Create the plot widget
         self.plot_widget = pg.GraphicsLayoutWidget(parent=self)
         self.plot_widget.ci.layout.setContentsMargins(0, 0, 0, 0)
         self.plot_widget.setMinimumHeight(PLOT_MINIMUM_HEIGHT)
-        self.main_layout.addWidget(QLabel("Live Signal Plots:"))
-        self.main_layout.addWidget(self.plot_widget)
+        
+        # Add plot widget to the collapsible container
+        self.plot_container.add_content_widget(self.plot_widget)
+        
+        # Add to main layout
+        self.main_layout.addWidget(self.plot_container)
 
     def _setup_send_message_section(self):
-        """Set up the send message section."""
-        send_message_group = QFormLayout()
-        self.message_name_to_send_edit = QLineEdit()
-        send_message_group.addRow("Message Name to Send:", self.message_name_to_send_edit)
+        """Set up the send message section using the new widget."""
+        # Create the collapsible send message widget
+        self.send_message_widget = CollapsibleSendMessageWidget("Send CAN Messages")
         
-        self.signal_data_to_send_edit = QLineEdit("{}")
-        send_message_group.addRow("Signal Data (JSON):", self.signal_data_to_send_edit)
-        
-        self.send_can_button = QPushButton("Send CAN Message")
-        self.send_can_button.clicked.connect(self.send_can_message_command)
-        send_message_group.addRow(self.send_can_button)
-        
-        self.main_layout.addLayout(send_message_group)
+        # Add to main layout
+        self.main_layout.addWidget(self.send_message_widget)
 
     def _setup_status_bar(self):
         """Set up the status bar."""
@@ -169,21 +207,10 @@ class CANDashboardMainWindow(QMainWindow):
         else:
             self.update_status_bar(f"Failed to connect to CAN: {response.get('message', 'Unknown error')}")
 
-    def send_can_message_command(self):
+    def send_can_message_command(self, message_name, signal_data):
         """Send command to backend to send a CAN message."""
-        msg_name = self.message_name_to_send_edit.text()
-        signal_data_str = self.signal_data_to_send_edit.text()
-        
-        try:
-            signal_data = json.loads(signal_data_str)
-            if not isinstance(signal_data, dict):
-                raise ValueError("Signal data must be a JSON object (dictionary).")
-        except (json.JSONDecodeError, ValueError) as e:
-            self.display_error(f"Invalid signal data: {e}")
-            return
-
         response = self.zmq_worker.send_command("send_can_message", {
-            "message_name": msg_name,
+            "message_name": message_name,
             "signal_data": signal_data
         })
         self._handle_backend_response(response, "Send CAN Message")
@@ -206,7 +233,7 @@ class CANDashboardMainWindow(QMainWindow):
         QMessageBox.warning(self, "Error", message)
         self.statusBar.showMessage(f"ERROR: {message}", 5000)
 
-    def update_plot_data(self, signal_name, value):
+    def update_display_data(self, signal_name, value):
         """Update live signal plots with new data and gauges."""
         current_time = time.time()
 
