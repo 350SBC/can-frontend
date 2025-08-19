@@ -65,6 +65,11 @@ class CANDashboardMainWindow(QMainWindow):
         self.current_plot_col = 0
         self.gauges = {}  # Store gauge references
         
+        # Performance optimization: batch updates
+        self.pending_updates = {}  # Buffer for gauge updates
+        self.last_update_time = {}  # Track last update time per signal
+        self.update_interval = SIGNAL_UPDATE_THRESHOLD  # Use config setting
+        
         # Define gauge configurations
         self.gauge_configs = [
             GaugeConfig("Engine RPM", 0, 6500, ["rpm", "engine_rpm", "engine_speed"], 10, "RPM"),
@@ -79,7 +84,14 @@ class CANDashboardMainWindow(QMainWindow):
         self._init_ui()
         self._connect_signals()
         self._init_plotting()
+        self._setup_update_timer()
         self._auto_connect_and_configure()
+
+    def _setup_update_timer(self):
+        """Setup timer for batched UI updates."""
+        self.ui_update_timer = QTimer()
+        self.ui_update_timer.timeout.connect(self._process_pending_updates)
+        self.ui_update_timer.start(UI_UPDATE_RATE)  # Use config setting for update rate
 
     def _setup_window(self):
         """Set up the main window properties."""
@@ -234,15 +246,41 @@ class CANDashboardMainWindow(QMainWindow):
         self.statusBar.showMessage(f"ERROR: {message}", 5000)
 
     def update_display_data(self, signal_name, value):
-        """Update live signal plots with new data and gauges."""
+        """Buffer signal updates for batch processing to improve performance."""
         current_time = time.time()
+        
+        # Rate limiting: skip updates that are too frequent for the same signal
+        if signal_name in self.last_update_time:
+            if (current_time - self.last_update_time[signal_name]) * 1000 < self.update_interval:
+                return
+        
+        self.last_update_time[signal_name] = current_time
+        
+        # Store update for batch processing
+        self.pending_updates[signal_name] = {'value': value, 'time': current_time}
 
-        # Update gauges if this signal matches any gauge
-        signal_lower = signal_name.lower()
-        if signal_lower in self.gauges:
-            self.gauges[signal_lower].set_value(value)
+    def _process_pending_updates(self):
+        """Process all pending updates in a batch for better performance."""
+        if not self.pending_updates:
+            return
+            
+        updates_to_process = self.pending_updates.copy()
+        self.pending_updates.clear()
+        
+        for signal_name, update_data in updates_to_process.items():
+            value = update_data['value']
+            current_time = update_data['time']
+            
+            # Update gauges if this signal matches any gauge
+            signal_lower = signal_name.lower()
+            if signal_lower in self.gauges:
+                self.gauges[signal_lower].set_value(value)
 
-        # Continue with existing plotting logic
+            # Continue with plotting logic (also optimized)
+            self._update_plot_data(signal_name, value, current_time)
+
+    def _update_plot_data(self, signal_name, value, current_time):
+        """Optimized plot data update method."""
         if signal_name not in self.plot_data:
             total_plots = len(self.plots)
             if total_plots >= MAX_PLOTS_PER_ROW * MAX_PLOT_ROWS:
@@ -280,12 +318,16 @@ class CANDashboardMainWindow(QMainWindow):
             data_entry['time'] = data_entry['time'][-MAX_PLOT_POINTS:]
             data_entry['value'] = data_entry['value'][-MAX_PLOT_POINTS:]
 
-        # Update the plot with new data
+        # Update the plot with new data (this is still needed for real-time plotting)
         data_entry['curve'].setData(data_entry['time'], data_entry['value'])
 
     def closeEvent(self, event):
         """Handle the application close event for graceful shutdown."""
         try:
+            # Stop UI update timer
+            if hasattr(self, 'ui_update_timer'):
+                self.ui_update_timer.stop()
+            
             # Stop the ZMQ worker
             if hasattr(self, 'zmq_worker'):
                 self.zmq_worker.stop_listening()

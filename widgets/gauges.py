@@ -15,8 +15,10 @@ class RoundGauge(QWidget):
         self.min_value = min_value
         self.max_value = max_value
         self.current_value = min_value
+        self.previous_value = min_value  # Track previous value to avoid unnecessary updates
         self.title = title
         self.num_ticks = num_ticks
+        self.update_threshold = 0.1  # Minimum change required to trigger update
         self._setup_widget()
 
     def _setup_widget(self):
@@ -25,9 +27,18 @@ class RoundGauge(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def set_value(self, value):
-        """Update the gauge value."""
-        self.current_value = max(self.min_value, min(self.max_value, value))
-        self.update()
+        """Update the gauge value with threshold checking for performance."""
+        new_value = max(self.min_value, min(self.max_value, value))
+        
+        # Only update if the change is significant enough
+        value_range = self.max_value - self.min_value
+        if value_range > 0:
+            change_percentage = abs(new_value - self.current_value) / value_range
+            if change_percentage < self.update_threshold / 100:  # Less than 0.1% change
+                return
+        
+        self.current_value = new_value
+        self.update()  # Trigger repaint only when needed
 
     def set_range(self, min_value, max_value):
         """Update the gauge range."""

@@ -5,6 +5,12 @@ import json
 import zmq
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
+# Import performance settings
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config.settings import ZMQ_POLL_INTERVAL, MAX_MESSAGES_PER_CYCLE
+
 
 class ZMQWorker(QObject):
     """Worker class for ZeroMQ communication with the backend."""
@@ -59,26 +65,41 @@ class ZMQWorker(QObject):
         self.backend_status_message.emit(f"Connected to Backend REQ/REP on {self.backend_ip}:{self.req_rep_port}")
 
     def start_listening_loop(self):
-        """Continuously receives messages from the backend's PUB socket."""
-        while self._listening:
-            try:
-                if not self.pub_socket or not self._listening:
-                    break
-                    
-                if self.pub_socket.poll(100) & zmq.POLLIN:
-                    message = self.pub_socket.recv_json()
+        """Use QTimer for non-blocking message reception."""
+        self.message_timer = QTimer()
+        self.message_timer.timeout.connect(self._poll_messages)
+        self.message_timer.start(ZMQ_POLL_INTERVAL)  # Use config setting
+
+    def _poll_messages(self):
+        """Poll for messages without blocking."""
+        if not self._listening or not self.pub_socket:
+            return
+            
+        try:
+            # Process multiple messages per timer cycle to handle bursts
+            messages_processed = 0
+            while messages_processed < MAX_MESSAGES_PER_CYCLE:  # Use config setting
+                if self.pub_socket.poll(0) & zmq.POLLIN:  # Non-blocking poll
+                    message = self.pub_socket.recv_json(zmq.NOBLOCK)
                     self._process_message(message)
-            except zmq.ZMQError as e:
-                if self._listening:
-                    self.backend_error_message.emit(f"ZeroMQ error during receive: {e}")
-                self._listening = False
-                break
-            except Exception as e:
-                if self._listening:
-                    self.backend_error_message.emit(f"Unexpected error in ZMQ listener: {e}")
-                self._listening = False
-                break
-        self.backend_status_message.emit("ZMQ listener stopped.")
+                    messages_processed += 1
+                else:
+                    break
+        except zmq.Again:
+            # No messages available, normal condition
+            pass
+        except zmq.ZMQError as e:
+            if self._listening:
+                self.backend_error_message.emit(f"ZeroMQ error during receive: {e}")
+            self._listening = False
+            if hasattr(self, 'message_timer'):
+                self.message_timer.stop()
+        except Exception as e:
+            if self._listening:
+                self.backend_error_message.emit(f"Unexpected error in ZMQ listener: {e}")
+            self._listening = False
+            if hasattr(self, 'message_timer'):
+                self.message_timer.stop()
 
     def _process_message(self, message):
         """Processes received messages and emits appropriate signals."""
@@ -109,6 +130,10 @@ class ZMQWorker(QObject):
         """Stops the ZeroMQ message reception loop and closes sockets."""
         self._listening = False
         self.backend_status_message.emit("Stopping ZMQ listener...")
+        
+        # Stop the timer
+        if hasattr(self, 'message_timer'):
+            self.message_timer.stop()
         
         try:
             if self.pub_socket:

@@ -1,4 +1,4 @@
-#!/home/one/newDash/backend/can_services_env/bin/python3
+#!/home/one/newDash/can-frontend/can_services_env/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys
