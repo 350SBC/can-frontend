@@ -32,6 +32,16 @@ MAX_MESSAGES_PER_CYCLE = 20  # increased message processing per cycle
 GAUGE_IMMEDIATE_THRESHOLD = 0.01  # 1% change triggers immediate repaint (more sensitive)
 GAUGE_SKIP_THRESHOLD = 0.0001     # 0.01% change threshold to skip updates (more responsive)
 
+# Gauge Visual Style
+GAUGE_STYLE = "modern"
+GAUGE_SWEEP_DIRECTION = "cw"
+
+# Gauge Visual Style
+# Options: "classic" (current RoundGauge), "modern" (gradient ring, colored zones, cached background)
+GAUGE_STYLE = "modern"
+# Gauge sweep direction: 'ccw' (counter-clockwise growth) or 'cw' (clockwise growth)
+GAUGE_SWEEP_DIRECTION = "cw"
+
 # Auto-connection Configuration
 AUTO_DBC_PATH = "dbc/test.dbc"
 AUTO_INTERFACE = "socketcan"

@@ -16,7 +16,7 @@ from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal
 import pyqtgraph as pg
 
 from communication.zmq_worker import ZMQWorker
-from widgets.gauges import RoundGauge, GaugeConfig
+from widgets.gauges import RoundGauge, GaugeConfig, ModernGauge, NeonGauge
 from widgets.send_message_widget import CollapsibleSendMessageWidget  # Import the new widget
 # from widgets.message_table import MessageTableWidget  # Uncomment when ready
 from config.settings import *
@@ -142,13 +142,31 @@ class CANDashboardMainWindow(QMainWindow):
         gauge_layout = QHBoxLayout()
         
         # Create gauges from configurations (limit to first few for space)
+        gauge_style = globals().get('GAUGE_STYLE', 'classic')
         for config in self.gauge_configs[:3]:  # Show first 3 gauges
-            gauge = RoundGauge(
-                min_value=config.min_value,
-                max_value=config.max_value,
-                title=config.display_title,
-                num_ticks=config.num_ticks
-            )
+            if gauge_style == 'modern':
+                # Use NeonGauge as primary modern style
+                gauge = NeonGauge(
+                    min_value=config.min_value,
+                    max_value=config.max_value,
+                    title=config.title,
+                    unit=config.unit,
+                    num_ticks=5 if config.title.lower() != 'afr' else 0
+                )
+            elif gauge_style == 'modern_arc':
+                gauge = ModernGauge(
+                    min_value=config.min_value,
+                    max_value=config.max_value,
+                    title=config.display_title,
+                    num_ticks=config.num_ticks
+                )
+            else:
+                gauge = RoundGauge(
+                    min_value=config.min_value,
+                    max_value=config.max_value,
+                    title=config.display_title,
+                    num_ticks=config.num_ticks
+                )
             
             # Store gauge with signal name mapping
             for signal_name in config.signal_names:
