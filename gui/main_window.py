@@ -65,10 +65,16 @@ class CANDashboardMainWindow(QMainWindow):
         self.current_plot_col = 0
         self.gauges = {}  # Store gauge references
         
-        # Performance optimization: batch updates
-        self.pending_updates = {}  # Buffer for gauge updates
-        self.last_update_time = {}  # Track last update time per signal
-        self.update_interval = SIGNAL_UPDATE_THRESHOLD  # Use config setting
+        # Performance optimization: separate handling for gauges and plots
+        self.pending_gauge_updates = {}  # Buffer for gauge updates (faster)
+        self.pending_plot_updates = {}   # Buffer for plot updates (slower)
+        self.last_gauge_update_time = {}  # Track last gauge update time
+        self.last_plot_update_time = {}   # Track last plot update time
+        self.gauge_update_interval = GAUGE_UPDATE_INTERVAL   # Ultra-fast for gauges
+        self.plot_update_interval = PLOT_UPDATE_INTERVAL     # Slower for plots
+        
+        # Critical signals that get immediate updates (bypass buffering)
+        self.critical_signals = {"rpm", "engine_rpm", "engine_speed", "speed", "vehicle_speed"}
         
         # Define gauge configurations
         self.gauge_configs = [
@@ -88,10 +94,10 @@ class CANDashboardMainWindow(QMainWindow):
         self._auto_connect_and_configure()
 
     def _setup_update_timer(self):
-        """Setup timer for batched UI updates."""
+        """Setup ultra-fast timer for maximum gauge responsiveness."""
         self.ui_update_timer = QTimer()
         self.ui_update_timer.timeout.connect(self._process_pending_updates)
-        self.ui_update_timer.start(UI_UPDATE_RATE)  # Use config setting for update rate
+        self.ui_update_timer.start(UI_UPDATE_RATE)  # Ultra-fast 120 FPS updates
 
     def _setup_window(self):
         """Set up the main window properties."""
@@ -246,38 +252,52 @@ class CANDashboardMainWindow(QMainWindow):
         self.statusBar.showMessage(f"ERROR: {message}", 5000)
 
     def update_display_data(self, signal_name, value):
-        """Buffer signal updates for batch processing to improve performance."""
+        """Ultra-responsive signal updates with immediate processing for critical signals."""
         current_time = time.time()
+        signal_lower = signal_name.lower()
         
-        # Rate limiting: skip updates that are too frequent for the same signal
-        if signal_name in self.last_update_time:
-            if (current_time - self.last_update_time[signal_name]) * 1000 < self.update_interval:
+        # Critical signals get immediate gauge updates (no buffering)
+        if signal_lower in self.critical_signals and signal_lower in self.gauges:
+            self.gauges[signal_lower].set_value(value)
+            # Still add to plot buffer for plotting
+            self.pending_plot_updates[signal_name] = {'value': value, 'time': current_time}
+            return
+        
+        # Handle other gauge updates with minimal delay
+        if signal_lower in self.gauges:
+            self.pending_gauge_updates[signal_name] = {'value': value, 'time': current_time}
+        
+        # Handle plot updates with rate limiting (for performance)
+        if signal_name in self.last_plot_update_time:
+            time_diff = (current_time - self.last_plot_update_time[signal_name]) * 1000
+            if time_diff < self.plot_update_interval:
                 return
         
-        self.last_update_time[signal_name] = current_time
-        
-        # Store update for batch processing
-        self.pending_updates[signal_name] = {'value': value, 'time': current_time}
+        self.last_plot_update_time[signal_name] = current_time
+        self.pending_plot_updates[signal_name] = {'value': value, 'time': current_time}
 
     def _process_pending_updates(self):
-        """Process all pending updates in a batch for better performance."""
-        if not self.pending_updates:
-            return
+        """Process pending gauge and plot updates separately for optimal performance."""
+        # Process gauge updates (higher priority, more frequent)
+        if self.pending_gauge_updates:
+            gauge_updates = self.pending_gauge_updates.copy()
+            self.pending_gauge_updates.clear()
             
-        updates_to_process = self.pending_updates.copy()
-        self.pending_updates.clear()
+            for signal_name, update_data in gauge_updates.items():
+                value = update_data['value']
+                signal_lower = signal_name.lower()
+                if signal_lower in self.gauges:
+                    self.gauges[signal_lower].set_value(value)
         
-        for signal_name, update_data in updates_to_process.items():
-            value = update_data['value']
-            current_time = update_data['time']
+        # Process plot updates (lower priority, less frequent)
+        if self.pending_plot_updates:
+            plot_updates = self.pending_plot_updates.copy()
+            self.pending_plot_updates.clear()
             
-            # Update gauges if this signal matches any gauge
-            signal_lower = signal_name.lower()
-            if signal_lower in self.gauges:
-                self.gauges[signal_lower].set_value(value)
-
-            # Continue with plotting logic (also optimized)
-            self._update_plot_data(signal_name, value, current_time)
+            for signal_name, update_data in plot_updates.items():
+                value = update_data['value']
+                current_time = update_data['time']
+                self._update_plot_data(signal_name, value, current_time)
 
     def _update_plot_data(self, signal_name, value, current_time):
         """Optimized plot data update method."""

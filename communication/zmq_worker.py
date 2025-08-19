@@ -71,14 +71,14 @@ class ZMQWorker(QObject):
         self.message_timer.start(ZMQ_POLL_INTERVAL)  # Use config setting
 
     def _poll_messages(self):
-        """Poll for messages without blocking."""
+        """Aggressively poll for messages to minimize latency."""
         if not self._listening or not self.pub_socket:
             return
             
         try:
-            # Process multiple messages per timer cycle to handle bursts
+            # Process more messages per timer cycle for high-throughput scenarios
             messages_processed = 0
-            while messages_processed < MAX_MESSAGES_PER_CYCLE:  # Use config setting
+            while messages_processed < MAX_MESSAGES_PER_CYCLE:  # Increased limit
                 if self.pub_socket.poll(0) & zmq.POLLIN:  # Non-blocking poll
                     message = self.pub_socket.recv_json(zmq.NOBLOCK)
                     self._process_message(message)

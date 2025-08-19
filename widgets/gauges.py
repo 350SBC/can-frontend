@@ -6,6 +6,12 @@ from PyQt6.QtWidgets import QWidget, QSizePolicy
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont
 from PyQt6.QtCore import QPointF
 
+# Import performance settings
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config.settings import GAUGE_IMMEDIATE_THRESHOLD, GAUGE_SKIP_THRESHOLD
+
 
 class RoundGauge(QWidget):
     """A round gauge widget for displaying numeric values."""
@@ -27,18 +33,28 @@ class RoundGauge(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def set_value(self, value):
-        """Update the gauge value with threshold checking for performance."""
+        """Update gauge value with Pi4-optimized rendering."""
         new_value = max(self.min_value, min(self.max_value, value))
         
-        # Only update if the change is significant enough
+        # Calculate change percentage
         value_range = self.max_value - self.min_value
         if value_range > 0:
             change_percentage = abs(new_value - self.current_value) / value_range
-            if change_percentage < self.update_threshold / 100:  # Less than 0.1% change
+            
+            # Pi4-optimized thresholds: Less sensitive to reduce GPU load
+            if change_percentage > GAUGE_IMMEDIATE_THRESHOLD:
+                self.current_value = new_value
+                # Use update() instead of repaint() on Pi4 for better performance
+                self.update()  # Let Qt optimize the repaint timing
+                return
+            
+            # More aggressive skipping on Pi4 to reduce GPU load
+            if change_percentage < GAUGE_SKIP_THRESHOLD:
                 return
         
+        # Normal update for Pi4
         self.current_value = new_value
-        self.update()  # Trigger repaint only when needed
+        self.update()
 
     def set_range(self, min_value, max_value):
         """Update the gauge range."""
