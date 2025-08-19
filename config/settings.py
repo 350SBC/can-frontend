@@ -33,14 +33,49 @@ GAUGE_IMMEDIATE_THRESHOLD = 0.01  # 1% change triggers immediate repaint (more s
 GAUGE_SKIP_THRESHOLD = 0.0001     # 0.01% change threshold to skip updates (more responsive)
 
 # Gauge Visual Style
-GAUGE_STYLE = "modern"
-GAUGE_SWEEP_DIRECTION = "cw"
+GAUGE_STYLE = "modern"  # Options: "round", "modern", "neon"
+GAUGE_SWEEP_DIRECTION = "cw"  # "cw" for clockwise, "ccw" for counter-clockwise
 
-# Gauge Visual Style
-# Options: "classic" (current RoundGauge), "modern" (gradient ring, colored zones, cached background)
-GAUGE_STYLE = "modern"
-# Gauge sweep direction: 'ccw' (counter-clockwise growth) or 'cw' (clockwise growth)
-GAUGE_SWEEP_DIRECTION = "cw"
+# Layout configurations
+LAYOUT_CONFIGS = {
+    "grid_2x3": {
+        "name": "Grid 2x3",
+        "type": "grid",
+        "rows": 2,
+        "cols": 3,
+        "spacing": 10
+    },
+    "grid_3x2": {
+        "name": "Grid 3x2", 
+        "type": "grid",
+        "rows": 3,
+        "cols": 2,
+        "spacing": 10
+    },
+    "single_row": {
+        "name": "Single Row",
+        "type": "grid",
+        "rows": 1,
+        "cols": 6,
+        "spacing": 5
+    },
+    "compact_2x3": {
+        "name": "Compact 2x3",
+        "type": "grid", 
+        "rows": 2,
+        "cols": 3,
+        "spacing": 5
+    },
+    "focus_primary": {
+        "name": "Focus Primary",
+        "type": "custom",
+        "primary_gauges": ["RPM", "Speed"],
+        "secondary_gauges": ["Temperature", "AFR", "Battery Voltage", "Oil Pressure"]
+    }
+}
+
+# Default layout
+DEFAULT_LAYOUT = "grid_2x3"
 
 # Auto-connection Configuration
 AUTO_DBC_PATH = "dbc/test.dbc"

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QLineEdit, QMessageBox, QFormLayout,
-                            QFrame)
+                            QFrame, QGridLayout)
 from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal
 import pyqtgraph as pg
 
@@ -83,6 +83,7 @@ class CANDashboardMainWindow(QMainWindow):
             GaugeConfig("Temperature", 60, 220, ["cts", "engine_temp", "temperature"], 7, "°f"),
             GaugeConfig("AFR", 0, 20, ["afr", "air_fuel_ratio"], 6, ":1"),
             GaugeConfig("Battery Voltage", 10, 16, ["battery_voltage", "voltage"], 7, "V"),
+            GaugeConfig("Oil Pressure", 0, 100, ["oil_pressure", "oil_psi"], 6, "PSI"),
         ]
         
         self._setup_window()
@@ -138,12 +139,13 @@ class CANDashboardMainWindow(QMainWindow):
 
     def _setup_gauges(self):
         """Set up gauge widgets based on configurations."""
-        # Create a scrollable area for gauges or use a grid
-        gauge_layout = QHBoxLayout()
+        # Create a grid layout for all gauges (2 rows x 3 columns)
+        gauge_layout = QGridLayout()
+        gauge_layout.setSpacing(20)  # Add spacing between gauges
         
-        # Create gauges from configurations (limit to first few for space)
+        # Create gauges from all configurations
         gauge_style = globals().get('GAUGE_STYLE', 'classic')
-        for config in self.gauge_configs[:3]:  # Show first 3 gauges
+        for i, config in enumerate(self.gauge_configs):  # Show all gauges
             if gauge_style == 'modern':
                 # Use NeonGauge as primary modern style
                 gauge = NeonGauge(
@@ -172,9 +174,11 @@ class CANDashboardMainWindow(QMainWindow):
             for signal_name in config.signal_names:
                 self.gauges[signal_name.lower()] = gauge
             
-            gauge_layout.addWidget(gauge)
+            # Place in grid (2 rows x 3 columns)
+            row = i // 3
+            col = i % 3
+            gauge_layout.addWidget(gauge, row, col)
         
-        gauge_layout.addStretch()
         self.main_layout.addLayout(gauge_layout)
 
     def _setup_plot_widget(self):
