@@ -77,7 +77,7 @@ class RoundGauge(QWidget):
 
     def _draw_outer_circle(self, painter, dimensions):
         """Draw the outer circle of the gauge."""
-        painter.setPen(QPen(QColor(100, 100, 100), 3))
+        painter.setPen(QPen(QColor(150, 150, 150), 3))  # Lighter gray for dark mode
         painter.drawEllipse(dimensions['center'], dimensions['radius'], dimensions['radius'])
 
     def _draw_title(self, painter, dimensions):
@@ -128,7 +128,7 @@ class RoundGauge(QWidget):
         num_x = center.x() + number_radius * math.cos(angle_rad)
         num_y = center.y() + number_radius * math.sin(angle_rad)
         
-        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.setPen(QPen(QColor(220, 220, 220)))  # Light gray text
         
         # Calculate the actual value for this tick
         if self.num_ticks > 1:

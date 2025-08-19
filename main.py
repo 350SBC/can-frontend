@@ -4,11 +4,15 @@
 import sys
 from PyQt6.QtWidgets import QApplication
 from gui.main_window import CANDashboardMainWindow
+from themes.dark_theme import DARK_THEME
 
 
 def main():
     """Main function to start the application."""
     app = QApplication(sys.argv)
+    
+    # Apply dark theme
+    app.setStyleSheet(DARK_THEME)
     
     # Create and show the main window
     window = CANDashboardMainWindow()
