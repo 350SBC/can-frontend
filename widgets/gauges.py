@@ -70,13 +70,15 @@ class RoundGauge(QWidget):
         painter.drawEllipse(dimensions['center'], dimensions['radius'], dimensions['radius'])
 
     def _draw_title(self, painter, dimensions):
-        """Draw the gauge title."""
-        painter.setPen(QPen(QColor(255, 255, 255)))
-        painter.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        """Draw the gauge title below the center."""
+        painter.setPen(QPen(QColor(200, 200, 200)))  # Dimmer for title
+        painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         title_rect = painter.fontMetrics().boundingRect(self.title)
+        
+        # Position title below center
         painter.drawText(
             int(dimensions['center'].x() - title_rect.width() / 2),
-            int(dimensions['center'].y() - dimensions['radius'] + 30),
+            int(dimensions['center'].y() + 30),  # Below center
             self.title
         )
 
@@ -169,9 +171,9 @@ class RoundGauge(QWidget):
         painter.drawEllipse(dimensions['center'], 8, 8)
 
     def _draw_value_text(self, painter, dimensions):
-        """Draw the current value text."""
-        painter.setPen(QPen(QColor(255, 255, 0)))
-        painter.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        """Draw the current value text above the center."""
+        painter.setPen(QPen(QColor(255, 255, 100)))  # Bright yellow for prominence
+        painter.setFont(QFont("Arial", 18, QFont.Weight.Bold))  # Large, readable font
         
         # Format the value based on the range
         if self.max_value - self.min_value >= 100:
@@ -184,7 +186,7 @@ class RoundGauge(QWidget):
         value_rect = painter.fontMetrics().boundingRect(value_text)
         painter.drawText(
             int(dimensions['center'].x() - value_rect.width() / 2),
-            int(dimensions['center'].y() + dimensions['radius'] - 40),
+            int(dimensions['center'].y() - 20),  # Changed from -10 to -20 (moved up 10 pixels)
             value_text
         )
 

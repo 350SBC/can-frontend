@@ -67,7 +67,7 @@ class CANDashboardMainWindow(QMainWindow):
         
         # Define gauge configurations
         self.gauge_configs = [
-            GaugeConfig("Engine RPM", 0, 6500, ["rpm", "engine_rpm", "engine_speed"], 10, "RPM"),
+            GaugeConfig("Engine RPM", 0, 6500, ["rpm", "engine_rpm", "engine_speed"], 14, "RPM"),
             GaugeConfig("Speed", 0, 100, ["speed", "vehicle_speed", "mph"], 21, "MPH"),
             GaugeConfig("Temperature", 60, 220, ["cts", "engine_temp", "temperature"], 7, "°f"),
             GaugeConfig("AFR", 0, 20, ["afr", "air_fuel_ratio"], 6, ":1"),
