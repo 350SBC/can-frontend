@@ -43,34 +43,104 @@ LAYOUT_CONFIGS = {
         "type": "grid",
         "rows": 2,
         "cols": 3,
-        "spacing": 10
+        "spacing": 20,
+        "gauge_sizes": {
+            "Temperature": {"scale_factor": 0.5},
+            "AFR": {"scale_factor": 0.5},
+            "Battery Voltage": {"scale_factor": 0.5},
+            "Oil Pressure": {"scale_factor": 0.5}
+        }
     },
     "grid_3x2": {
         "name": "Grid 3x2", 
         "type": "grid",
         "rows": 3,
         "cols": 2,
-        "spacing": 10
+        "spacing": 20,
+        "gauge_sizes": {
+            "Temperature": {"scale_factor": 0.5},
+            "AFR": {"scale_factor": 0.5},
+            "Battery Voltage": {"scale_factor": 0.5},
+            "Oil Pressure": {"scale_factor": 0.5}
+        }
     },
     "single_row": {
         "name": "Single Row",
         "type": "grid",
         "rows": 1,
         "cols": 6,
-        "spacing": 5
+        "spacing": 5,
+        "gauge_sizes": {
+            "Temperature": {"scale_factor": 0.5},
+            "AFR": {"scale_factor": 0.5},
+            "Battery Voltage": {"scale_factor": 0.5},
+            "Oil Pressure": {"scale_factor": 0.5}
+        }
     },
     "compact_2x3": {
         "name": "Compact 2x3",
         "type": "grid", 
         "rows": 2,
         "cols": 3,
-        "spacing": 5
+        "spacing": 5,
+        "gauge_sizes": {
+            "Temperature": {"scale_factor": 0.5},
+            "AFR": {"scale_factor": 0.5},
+            "Battery Voltage": {"scale_factor": 0.5},
+            "Oil Pressure": {"scale_factor": 0.5}
+        }
     },
     "focus_primary": {
         "name": "Focus Primary",
         "type": "custom",
         "primary_gauges": ["RPM", "Speed"],
         "secondary_gauges": ["Temperature", "AFR", "Battery Voltage", "Oil Pressure"]
+    },
+    "large_rpm_speed": {
+        "name": "Large RPM/Speed",
+        "type": "grid",
+        "rows": 2,
+        "cols": 3,
+        "spacing": 15,
+        "gauge_sizes": {
+            "RPM": {"scale_factor": 1.4},  # 40% larger than default
+            "Speed": {"scale_factor": 1.4},
+            "Temperature": {"scale_factor": 0.5},  # 1/2 size
+            "AFR": {"scale_factor": 0.5},  # 1/2 size
+            "Battery Voltage": {"scale_factor": 0.5},  # 1/2 size
+            "Oil Pressure": {"scale_factor": 0.5}  # 1/2 size
+        }
+    },
+    "small_secondary": {
+        "name": "Small Secondary",
+        "type": "grid", 
+        "rows": 2,
+        "cols": 3,
+        "spacing": 10,
+        "gauge_sizes": {
+            "RPM": {"scale_factor": 1.2},  # 20% larger
+            "Speed": {"scale_factor": 1.2},
+            "Temperature": {"scale_factor": 0.5},  # 1/2 size
+            "AFR": {"scale_factor": 0.5},  # 1/2 size
+            "Battery Voltage": {"scale_factor": 0.5},  # 1/2 size
+            "Oil Pressure": {"scale_factor": 0.5}  # 1/2 size
+        }
+    },
+    "proportional_2x3": {
+        "name": "Proportional 2x3",
+        "type": "grid",
+        "rows": 2,
+        "cols": 3,
+        "spacing": 20,
+        "use_proportional_sizing": True,
+        "gauge_proportions": {
+            "RPM": {"width_percent": 30, "height_percent": 45},  # Takes 30% width, 45% height of available space
+            "Speed": {"width_percent": 30, "height_percent": 45},
+            "Temperature": {"width_percent": 20, "height_percent": 25},  # Half size proportionally
+            "AFR": {"width_percent": 20, "height_percent": 25},  # Half size proportionally
+            "Battery Voltage": {"width_percent": 20, "height_percent": 25},  # Half size proportionally
+            "Oil Pressure": {"width_percent": 20, "height_percent": 25}  # Half size proportionally
+        }
     }
 }
 

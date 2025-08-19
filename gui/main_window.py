@@ -11,13 +11,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QLineEdit, QMessageBox, QFormLayout,
-                            QFrame, QGridLayout)
+                            QFrame, QGridLayout, QComboBox)
 from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal
 import pyqtgraph as pg
 
 from communication.zmq_worker import ZMQWorker
 from widgets.gauges import RoundGauge, GaugeConfig, ModernGauge, NeonGauge
 from widgets.send_message_widget import CollapsibleSendMessageWidget  # Import the new widget
+from gui.layout_manager import LayoutManager
 # from widgets.message_table import MessageTableWidget  # Uncomment when ready
 from config.settings import *
 
@@ -86,6 +87,11 @@ class CANDashboardMainWindow(QMainWindow):
             GaugeConfig("Oil Pressure", 0, 100, ["oil_pressure", "oil_psi"], 6, "PSI"),
         ]
         
+        # Initialize layout manager
+        self.layout_manager = LayoutManager()
+        self.current_layout_name = DEFAULT_LAYOUT
+        self.gauge_widgets = []  # Store gauge widgets for layout switching
+        
         self._setup_window()
         self._setup_zmq_worker()
         self._init_ui()
@@ -131,55 +137,156 @@ class CANDashboardMainWindow(QMainWindow):
 
     def _init_ui(self):
         """Initialize the user interface."""
+        self._setup_layout_controls()
         self._setup_gauges()
         # self._setup_message_table()  # Uncomment when ready
         self._setup_plot_widget()
         self._setup_send_message_section()
         self._setup_status_bar()
 
+    def _setup_layout_controls(self):
+        """Set up layout switching controls."""
+        # Create layout control widget
+        layout_control_widget = QWidget()
+        layout_control_layout = QHBoxLayout(layout_control_widget)
+        
+        # Layout selector
+        layout_label = QLabel("Layout:")
+        self.layout_combo = QComboBox()
+        
+        # Populate combo box with available layouts
+        for layout_key, layout_config in LAYOUT_CONFIGS.items():
+            self.layout_combo.addItem(layout_config["name"], layout_key)
+        
+        # Set current layout
+        index = self.layout_combo.findData(self.current_layout_name)
+        if index >= 0:
+            self.layout_combo.setCurrentIndex(index)
+        
+        # Connect signal
+        self.layout_combo.currentIndexChanged.connect(self._on_layout_changed)
+        
+        layout_control_layout.addWidget(layout_label)
+        layout_control_layout.addWidget(self.layout_combo)
+        layout_control_layout.addStretch()  # Push everything to the left
+        
+        # Add to main layout
+        self.main_layout.addWidget(layout_control_widget)
+
     def _setup_gauges(self):
         """Set up gauge widgets based on configurations."""
-        # Create a grid layout for all gauges (2 rows x 3 columns)
-        gauge_layout = QGridLayout()
-        gauge_layout.setSpacing(20)  # Add spacing between gauges
+        # Create gauge widgets (only once)
+        if not self.gauge_widgets:  # Only create if not already created
+            gauge_style = globals().get('GAUGE_STYLE', 'classic')
+            for config in self.gauge_configs:
+                if gauge_style == 'modern':
+                    # Use NeonGauge as primary modern style
+                    gauge = NeonGauge(
+                        min_value=config.min_value,
+                        max_value=config.max_value,
+                        title=config.title,
+                        unit=config.unit,
+                        num_ticks=5 if config.title.lower() != 'afr' else 0
+                    )
+                elif gauge_style == 'modern_arc':
+                    gauge = ModernGauge(
+                        min_value=config.min_value,
+                        max_value=config.max_value,
+                        title=config.display_title,
+                        num_ticks=config.num_ticks
+                    )
+                else:
+                    gauge = RoundGauge(
+                        min_value=config.min_value,
+                        max_value=config.max_value,
+                        title=config.display_title,
+                        num_ticks=config.num_ticks
+                    )
+                
+                # Store config reference for layout manager
+                gauge.config = config
+                self.gauge_widgets.append(gauge)
+                
+                # Store gauge with signal name mapping
+                for signal_name in config.signal_names:
+                    self.gauges[signal_name.lower()] = gauge
         
-        # Create gauges from all configurations
-        gauge_style = globals().get('GAUGE_STYLE', 'classic')
-        for i, config in enumerate(self.gauge_configs):  # Show all gauges
-            if gauge_style == 'modern':
-                # Use NeonGauge as primary modern style
-                gauge = NeonGauge(
-                    min_value=config.min_value,
-                    max_value=config.max_value,
-                    title=config.title,
-                    unit=config.unit,
-                    num_ticks=5 if config.title.lower() != 'afr' else 0
-                )
-            elif gauge_style == 'modern_arc':
-                gauge = ModernGauge(
-                    min_value=config.min_value,
-                    max_value=config.max_value,
-                    title=config.display_title,
-                    num_ticks=config.num_ticks
-                )
-            else:
-                gauge = RoundGauge(
-                    min_value=config.min_value,
-                    max_value=config.max_value,
-                    title=config.display_title,
-                    num_ticks=config.num_ticks
-                )
+        # Apply current layout
+        self._apply_layout(self.current_layout_name)
+
+    def _apply_layout(self, layout_name):
+        """Apply a specific layout to the gauges."""
+        # Remove existing gauge layout if it exists
+        if hasattr(self, 'gauge_layout') and self.gauge_layout:
+            self._clear_layout(self.gauge_layout)
+            self.main_layout.removeItem(self.gauge_layout)
+        
+        # Reset gauge sizes before applying new layout
+        self.layout_manager.reset_gauge_sizes(self.gauge_widgets)
+        
+        # Get current window size for relative calculations
+        window_size = (self.width(), self.height())
+        
+        # Create new layout using layout manager
+        try:
+            self.gauge_layout = self.layout_manager.create_layout(layout_name, self.gauge_widgets, window_size)
+            self.current_layout_name = layout_name
             
-            # Store gauge with signal name mapping
-            for signal_name in config.signal_names:
-                self.gauges[signal_name.lower()] = gauge
+            # Insert gauge layout after layout controls but before plots
+            self.main_layout.insertLayout(1, self.gauge_layout)
             
-            # Place in grid (2 rows x 3 columns)
+        except Exception as e:
+            print(f"Error applying layout {layout_name}: {e}")
+            # Fallback to default grid layout
+            self._apply_fallback_layout()
+
+    def resizeEvent(self, event):
+        """Handle window resize events to update gauge sizes."""
+        super().resizeEvent(event)
+        
+        # Update layout manager with new window size
+        if hasattr(self, 'layout_manager') and hasattr(self, 'current_layout_name'):
+            self.layout_manager.set_window_size(self.width(), self.height())
+            
+            # Re-apply current layout with new window size if using relative sizing
+            if (hasattr(self, 'current_layout_name') and 
+                self.current_layout_name in LAYOUT_CONFIGS):
+                config = LAYOUT_CONFIGS[self.current_layout_name]
+                if (config.get("use_proportional_sizing") or 
+                    any("scale_factor" in gauge_config for gauge_config in 
+                        config.get("gauge_sizes", {}).values())):
+                    # Only re-apply if layout uses relative sizing
+                    self._apply_layout(self.current_layout_name)
+
+    def _apply_fallback_layout(self):
+        """Apply a fallback grid layout if the selected layout fails."""
+        self.gauge_layout = QGridLayout()
+        self.gauge_layout.setSpacing(20)
+        
+        # Simple 2x3 grid
+        for i, gauge in enumerate(self.gauge_widgets):
             row = i // 3
             col = i % 3
-            gauge_layout.addWidget(gauge, row, col)
+            self.gauge_layout.addWidget(gauge, row, col)
         
-        self.main_layout.addLayout(gauge_layout)
+        self.main_layout.insertLayout(1, self.gauge_layout)
+
+    def _clear_layout(self, layout):
+        """Clear all widgets from a layout without deleting them."""
+        if layout is not None:
+            while layout.count():
+                child = layout.takeAt(0)
+                if child.widget():
+                    child.widget().setParent(None)
+                elif child.layout():
+                    self._clear_layout(child.layout())
+
+    def _on_layout_changed(self):
+        """Handle layout selection change."""
+        layout_key = self.layout_combo.currentData()
+        if layout_key and layout_key != self.current_layout_name:
+            self._apply_layout(layout_key)
+            self.update_status_bar(f"Layout changed to: {LAYOUT_CONFIGS[layout_key]['name']}")
 
     def _setup_plot_widget(self):
         """Set up the plot widget as a collapsible widget."""
