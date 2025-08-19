@@ -7,7 +7,7 @@ PUB_PORT = "5556"
 REQ_REP_PORT = "5557"
 
 # UI Configuration
-WINDOW_GEOMETRY = (10, 10, 1400, 900)
+WINDOW_GEOMETRY = (0, 10, 1024, 768)
 WINDOW_TITLE = "CAN Dashboard Frontend"
 
 # Plotting Configuration
