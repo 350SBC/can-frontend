@@ -75,9 +75,9 @@ class CANDashboardMainWindow(QMainWindow):
             GaugeConfig("Engine RPM", 0, 6500, ["rpm", "engine_rpm", "engine_speed"], 14, "RPM"),
             GaugeConfig("Speed", 0, 100, ["speed", "vehicle_speed", "mph"], 21, "MPH"),
             GaugeConfig("Temperature", 60, 220, ["cts", "engine_temp", "temperature"], 7, "°f"),
-            GaugeConfig("AFR", 0, 20, ["afr", "air_fuel_ratio"], 6, ":1"),
+            GaugeConfig("AFR", 0, 20, ["average_afr", "air_fuel_ratio"], 6, ":1"),
             GaugeConfig("Battery Voltage", 10, 16, ["battery_voltage", "voltage"], 7, "V"),
-            GaugeConfig("Oil Pressure", 0, 100, ["oil_pressure", "oil_psi"], 6, "PSI"),
+            GaugeConfig("Oil Pressure", 0, 100, ["oil", "oil_psi"], 6, "PSI"),
         ]
 
         # Initialize layout manager
@@ -356,13 +356,17 @@ class CANDashboardMainWindow(QMainWindow):
     def update_display_data(self, signal_name, value):
         """Ultra-responsive signal updates (plots removed)."""
         signal_lower = signal_name.lower()
-        # Critical signals update immediately
-        if signal_lower in self.critical_signals and signal_lower in self.gauges:
-            self.gauges[signal_lower].set_value(value)
-            return
-        # Buffer non-critical updates (single latest value per signal)
+        # Optional whitelist filtering: if configured, ignore signals not explicitly listed
+        if 'DISPLAY_SIGNAL_WHITELIST' in globals() and DISPLAY_SIGNAL_WHITELIST:
+            if signal_lower not in DISPLAY_SIGNAL_WHITELIST:
+                return
+        # Decide immediate vs buffered based on config and criticality
         if signal_lower in self.gauges:
-            self.pending_gauge_updates[signal_name] = {'value': value, 'time': time.time()}
+            if REALTIME_GAUGE_UPDATES or signal_lower in self.critical_signals:
+                self.gauges[signal_lower].set_value(value)
+            else:
+                # Buffer latest value only
+                self.pending_gauge_updates[signal_name] = {'value': value, 'time': time.time()}
 
     def _process_pending_updates(self):
         """Process pending gauge updates (plots removed)."""
@@ -374,6 +378,17 @@ class CANDashboardMainWindow(QMainWindow):
                 signal_lower = signal_name.lower()
                 if signal_lower in self.gauges:
                     self.gauges[signal_lower].set_value(value)
+
+    def flush_inflight(self):
+        """Immediately clear any queued updates and drain ZMQ backlog to stop lingering movement."""
+        # Clear GUI-side pending updates
+        self.pending_gauge_updates.clear()
+        # Ask worker to drain socket queue
+        try:
+            if hasattr(self, 'zmq_worker'):
+                self.zmq_worker.flush_backlog()
+        except Exception:
+            pass
 
     # Plot update method removed
 
