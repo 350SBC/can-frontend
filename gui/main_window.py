@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QLineEdit, QMessageBox, QFormLayout,
                             QFrame, QGridLayout, QComboBox)
 from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal
-import pyqtgraph as pg
 
 from communication.zmq_worker import ZMQWorker
 from widgets.gauges import RoundGauge, GaugeConfig, ModernGauge, NeonGauge
@@ -60,23 +59,17 @@ class CANDashboardMainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.plot_data = {}
-        self.plots = {}
-        self.current_plot_row = 0
-        self.current_plot_col = 0
+        # Plotting removed – no plot data structures needed
         self.gauges = {}  # Store gauge references
-        
-        # Performance optimization: separate handling for gauges and plots
-        self.pending_gauge_updates = {}  # Buffer for gauge updates (faster)
-        self.pending_plot_updates = {}   # Buffer for plot updates (slower)
-        self.last_gauge_update_time = {}  # Track last gauge update time
-        self.last_plot_update_time = {}   # Track last plot update time
-        self.gauge_update_interval = GAUGE_UPDATE_INTERVAL   # Ultra-fast for gauges
-        self.plot_update_interval = PLOT_UPDATE_INTERVAL     # Slower for plots
-        
+
+        # Performance optimization: gauge-only (plots removed)
+        self.pending_gauge_updates = {}
+        self.last_gauge_update_time = {}
+        self.gauge_update_interval = GAUGE_UPDATE_INTERVAL
+
         # Critical signals that get immediate updates (bypass buffering)
         self.critical_signals = {"rpm", "engine_rpm", "engine_speed", "speed", "vehicle_speed"}
-        
+
         # Define gauge configurations
         self.gauge_configs = [
             GaugeConfig("Engine RPM", 0, 6500, ["rpm", "engine_rpm", "engine_speed"], 14, "RPM"),
@@ -86,17 +79,16 @@ class CANDashboardMainWindow(QMainWindow):
             GaugeConfig("Battery Voltage", 10, 16, ["battery_voltage", "voltage"], 7, "V"),
             GaugeConfig("Oil Pressure", 0, 100, ["oil_pressure", "oil_psi"], 6, "PSI"),
         ]
-        
+
         # Initialize layout manager
         self.layout_manager = LayoutManager()
         self.current_layout_name = DEFAULT_LAYOUT
         self.gauge_widgets = []  # Store gauge widgets for layout switching
-        
+
         self._setup_window()
         self._setup_zmq_worker()
         self._init_ui()
         self._connect_signals()
-        self._init_plotting()
         self._setup_update_timer()
         self._auto_connect_and_configure()
 
@@ -140,7 +132,6 @@ class CANDashboardMainWindow(QMainWindow):
         self._setup_layout_controls()
         self._setup_gauges()
         # self._setup_message_table()  # Uncomment when ready
-        self._setup_plot_widget()
         self._setup_send_message_section()
         self._setup_status_bar()
 
@@ -288,22 +279,6 @@ class CANDashboardMainWindow(QMainWindow):
             self._apply_layout(layout_key)
             self.update_status_bar(f"Layout changed to: {LAYOUT_CONFIGS[layout_key]['name']}")
 
-    def _setup_plot_widget(self):
-        """Set up the plot widget as a collapsible widget."""
-        # Create collapsible container
-        self.plot_container = CollapsibleWidget("▶ Live Signal Plots")
-        
-        # Create the plot widget
-        self.plot_widget = pg.GraphicsLayoutWidget(parent=self)
-        self.plot_widget.ci.layout.setContentsMargins(0, 0, 0, 0)
-        self.plot_widget.setMinimumHeight(PLOT_MINIMUM_HEIGHT)
-        
-        # Add plot widget to the collapsible container
-        self.plot_container.add_content_widget(self.plot_widget)
-        
-        # Add to main layout
-        self.main_layout.addWidget(self.plot_container)
-
     def _setup_send_message_section(self):
         """Set up the send message section using the new widget."""
         # Create the collapsible send message widget
@@ -317,9 +292,7 @@ class CANDashboardMainWindow(QMainWindow):
         self.statusBar = self.statusBar()
         self.statusBar.showMessage("Ready")
 
-    def _init_plotting(self):
-        """Initialize plotting parameters."""
-        pass
+    # Plot initialization removed
 
     def _auto_connect_and_configure(self):
         """Automatically connect and configure the backend."""
@@ -381,94 +354,28 @@ class CANDashboardMainWindow(QMainWindow):
         self.statusBar.showMessage(f"ERROR: {message}", 5000)
 
     def update_display_data(self, signal_name, value):
-        """Ultra-responsive signal updates with immediate processing for critical signals."""
-        current_time = time.time()
+        """Ultra-responsive signal updates (plots removed)."""
         signal_lower = signal_name.lower()
-        
-        # Critical signals get immediate gauge updates (no buffering)
+        # Critical signals update immediately
         if signal_lower in self.critical_signals and signal_lower in self.gauges:
             self.gauges[signal_lower].set_value(value)
-            # Still add to plot buffer for plotting
-            self.pending_plot_updates[signal_name] = {'value': value, 'time': current_time}
             return
-        
-        # Handle other gauge updates with minimal delay
+        # Buffer non-critical updates (single latest value per signal)
         if signal_lower in self.gauges:
-            self.pending_gauge_updates[signal_name] = {'value': value, 'time': current_time}
-        
-        # Handle plot updates with rate limiting (for performance)
-        if signal_name in self.last_plot_update_time:
-            time_diff = (current_time - self.last_plot_update_time[signal_name]) * 1000
-            if time_diff < self.plot_update_interval:
-                return
-        
-        self.last_plot_update_time[signal_name] = current_time
-        self.pending_plot_updates[signal_name] = {'value': value, 'time': current_time}
+            self.pending_gauge_updates[signal_name] = {'value': value, 'time': time.time()}
 
     def _process_pending_updates(self):
-        """Process pending gauge and plot updates separately for optimal performance."""
-        # Process gauge updates (higher priority, more frequent)
+        """Process pending gauge updates (plots removed)."""
         if self.pending_gauge_updates:
-            gauge_updates = self.pending_gauge_updates.copy()
+            updates = self.pending_gauge_updates.copy()
             self.pending_gauge_updates.clear()
-            
-            for signal_name, update_data in gauge_updates.items():
+            for signal_name, update_data in updates.items():
                 value = update_data['value']
                 signal_lower = signal_name.lower()
                 if signal_lower in self.gauges:
                     self.gauges[signal_lower].set_value(value)
-        
-        # Process plot updates (lower priority, less frequent)
-        if self.pending_plot_updates:
-            plot_updates = self.pending_plot_updates.copy()
-            self.pending_plot_updates.clear()
-            
-            for signal_name, update_data in plot_updates.items():
-                value = update_data['value']
-                current_time = update_data['time']
-                self._update_plot_data(signal_name, value, current_time)
 
-    def _update_plot_data(self, signal_name, value, current_time):
-        """Optimized plot data update method."""
-        if signal_name not in self.plot_data:
-            total_plots = len(self.plots)
-            if total_plots >= MAX_PLOTS_PER_ROW * MAX_PLOT_ROWS:
-                return
-
-            # Create a new plot for this signal
-            plot_item = self.plot_widget.addPlot(
-                row=self.current_plot_row,
-                col=self.current_plot_col,
-                title=signal_name
-            )
-            plot_item.setLabel('bottom', "Time", units='s')
-            plot_item.setLabel('left', "Value")
-            plot_item.showGrid(x=True, y=True)
-            plot_curve = plot_item.plot(pen='y')
-
-            # Store references to data and curve
-            self.plot_data[signal_name] = {
-                'time': [], 'value': [], 'curve': plot_curve, 'start_time': current_time
-            }
-            self.plots[signal_name] = plot_item
-
-            # Move to the next position in the plot grid
-            self.current_plot_col += 1
-            if self.current_plot_col >= MAX_PLOTS_PER_ROW:
-                self.current_plot_col = 0
-                self.current_plot_row += 1
-
-        data_entry = self.plot_data[signal_name]
-        data_entry['time'].append(current_time - data_entry['start_time'])
-        data_entry['value'].append(value)
-
-        # Keep only the most recent points for performance
-        if len(data_entry['time']) > MAX_PLOT_POINTS:
-            data_entry['time'] = data_entry['time'][-MAX_PLOT_POINTS:]
-            data_entry['value'] = data_entry['value'][-MAX_PLOT_POINTS:]
-
-        # Update the plot with new data (this is still needed for real-time plotting)
-        data_entry['curve'].setData(data_entry['time'], data_entry['value'])
+    # Plot update method removed
 
     def closeEvent(self, event):
         """Handle the application close event for graceful shutdown."""
