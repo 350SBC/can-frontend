@@ -42,8 +42,19 @@ class LayoutManager:
             return self._create_grid_layout(config, gauges)
         elif config["type"] == "custom":
             return self._create_custom_layout(config, gauges)
+        elif config["type"] == "video_grid":
+            return self._create_video_grid_layout(config)
         else:
             raise ValueError(f"Unknown layout type: {config['type']}")
+    def _create_video_grid_layout(self, config):
+        from PyQt6.QtWidgets import QVBoxLayout
+        layout = QVBoxLayout()
+        num_cameras = config.get("num_cameras", 4)
+        camera_indices = config.get("camera_indices", list(range(num_cameras)))
+        from widgets.video_grid_widget import VideoGridWidget
+        video_widget = VideoGridWidget(camera_indices=camera_indices)
+        layout.addWidget(video_widget)
+        return layout
     
     def _create_grid_layout(self, config, gauges):
         """Create a grid layout based on configuration."""

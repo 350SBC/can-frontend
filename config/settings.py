@@ -48,6 +48,13 @@ MAX_SIGNALS_PER_MESSAGE = 0
 
 # Layout configurations
 LAYOUT_CONFIGS = {
+    "video_grid": {
+        "name": "Video Grid",
+        "type": "video_grid",
+        "num_cameras": 4,  # Default, can be changed dynamically
+        "camera_indices": [0, 1, 2, 3],
+        "spacing": 10
+    },
     "grid_2x3": {
         "name": "Grid 2x3",
         "type": "grid",
@@ -155,7 +162,8 @@ LAYOUT_CONFIGS = {
 }
 
 # Default layout
-DEFAULT_LAYOUT = "grid_2x3"
+#DEFAULT_LAYOUT = "grid_2x3"
+DEFAULT_LAYOUT = "video_grid"
 
 # Auto-connection Configuration
 AUTO_DBC_PATH = "dbc/test.dbc"
