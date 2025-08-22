@@ -7,7 +7,7 @@ PUB_PORT = "5556"
 REQ_REP_PORT = "5557"
 
 # UI Configuration
-WINDOW_GEOMETRY = (0, 10, 1024, 768)
+WINDOW_GEOMETRY = (0, 5, 1024, 768)
 WINDOW_TITLE = "CAN Dashboard Frontend"
 
 # (Legacy table configuration removed: MAX_BUFFER_SIZE, TABLE_UPDATE_INTERVAL were unused)
@@ -55,10 +55,10 @@ LAYOUT_CONFIGS = {
         "cols": 3,
         "spacing": 20,
         "gauge_sizes": {
-            "Temperature": {"scale_factor": 0.5},
-            "AFR": {"scale_factor": 0.5},
-            "Battery Voltage": {"scale_factor": 0.5},
-            "Oil Pressure": {"scale_factor": 0.5}
+           # "Temperature": {"scale_factor": 0.5},
+            # "AFR": {"scale_factor": 0.5},
+            # "Battery Voltage": {"scale_factor": 0.5},
+            # "Oil Pressure": {"scale_factor": 0.5}
         }
     },
     "grid_3x2": {
@@ -68,10 +68,10 @@ LAYOUT_CONFIGS = {
         "cols": 2,
         "spacing": 20,
         "gauge_sizes": {
-            "Temperature": {"scale_factor": 0.5},
-            "AFR": {"scale_factor": 0.5},
-            "Battery Voltage": {"scale_factor": 0.5},
-            "Oil Pressure": {"scale_factor": 0.5}
+            # "Temperature": {"scale_factor": 0.5},
+            # "AFR": {"scale_factor": 0.5},
+            # "Battery Voltage": {"scale_factor": 0.5},
+            # "Oil Pressure": {"scale_factor": 0.5}
         }
     },
     "single_row": {
