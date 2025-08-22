@@ -51,10 +51,9 @@ LAYOUT_CONFIGS = {
     "video_grid": {
         "name": "Video Grid",
         "type": "video_grid",
-        "num_cameras": 4,  # Default, can be changed dynamically
-        "camera_indices": [0, 1, 2, 3],
+        "num_cameras": 2,  # Default, can be changed dynamically
+        "camera_indices": [0, 2],
         "spacing": 10
-    ,"scale_factor": 1.0  # 1.0 = fill, <1.0 = shrink
     },
     "grid_2x3": {
         "name": "Grid 2x3",
