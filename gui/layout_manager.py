@@ -53,6 +53,17 @@ class LayoutManager:
         camera_indices = config.get("camera_indices", list(range(num_cameras)))
         from widgets.video_grid_widget import VideoGridWidget
         video_widget = VideoGridWidget(camera_indices=camera_indices)
+        scale_factor = config.get("scale_factor", 1.0)
+        video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        if scale_factor < 1.0:
+            # Shrink widget by scale_factor relative to parent size
+            def resize_event(event):
+                parent = video_widget.parentWidget()
+                if parent:
+                    w = int(parent.width() * scale_factor)
+                    h = int(parent.height() * scale_factor)
+                    video_widget.resize(w, h)
+            video_widget.resizeEvent = resize_event
         layout.addWidget(video_widget)
         return layout
     
