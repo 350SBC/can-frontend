@@ -48,6 +48,24 @@ MAX_SIGNALS_PER_MESSAGE = 0
 
 # Layout configurations
 LAYOUT_CONFIGS = {
+    "gauges_video_center": {
+        "name": "Gauges Left/Right, Video Center",
+        "type": "gauges_video_center",
+        "num_cameras": 2,
+        "camera_indices": [0, 2],
+    "gauge_left": ["RPM", "Speed", "Temperature"],
+    "gauge_right": ["AFR", "Battery Voltage", "Oil Pressure"],
+        "spacing": 0,
+        "gauge_sizes": {
+            "RPM": {"scale_factor": 0.5},
+            "Speed": {"scale_factor": 0.5},
+            "Temperature": {"scale_factor": 0.5},
+            "AFR": {"scale_factor": 0.5},
+            "Battery Voltage": {"scale_factor": 0.5},
+            "Oil Pressure": {"scale_factor": 0.5}
+        }
+    
+    },
     "video_grid": {
         "name": "Video Grid",
         "type": "video_grid",
@@ -162,8 +180,7 @@ LAYOUT_CONFIGS = {
 }
 
 # Default layout
-#DEFAULT_LAYOUT = "grid_2x3"
-DEFAULT_LAYOUT = "video_grid"
+DEFAULT_LAYOUT = "gauges_video_center"
 
 # Auto-connection Configuration
 AUTO_DBC_PATH = "dbc/test.dbc"

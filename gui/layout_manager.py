@@ -1,3 +1,9 @@
+    # ...existing imports and class definition...
+
+class LayoutManager:
+    """Manages different layout configurations for gauges."""
+    # ...existing methods...
+
 # gui/layout_manager.py
 """Layout manager for handling different gauge arrangements."""
 
@@ -44,8 +50,47 @@ class LayoutManager:
             return self._create_custom_layout(config, gauges)
         elif config["type"] == "video_grid":
             return self._create_video_grid_layout(config)
+        elif config["type"] == "gauges_video_center":
+            return self._create_gauges_video_center_layout(config, gauges)
         else:
             raise ValueError(f"Unknown layout type: {config['type']}")
+    def _create_gauges_video_center_layout(self, config, gauges):
+        from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QSizePolicy
+        from widgets.video_grid_widget import VideoGridWidget
+        layout = QHBoxLayout()
+        layout.setSpacing(config.get("spacing", 0))
+
+        # Split gauges by name
+        left_names = set(config.get("gauge_left", []))
+        right_names = set(config.get("gauge_right", []))
+        left_gauges = [g for g in gauges if getattr(g.config, "title", getattr(g.config, "name", "")) in left_names]
+        right_gauges = [g for g in gauges if getattr(g.config, "title", getattr(g.config, "name", "")) in right_names]
+
+        # Left gauges (vertical)
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(0)
+        base_size = 180  # or calculate from window size if needed
+        for g in left_gauges:
+            self._apply_gauge_sizing(g, config, base_size)
+            left_layout.addWidget(g)
+        layout.addLayout(left_layout)
+
+        # Video grid center
+        num_cameras = config.get("num_cameras", 2)
+        camera_indices = config.get("camera_indices", list(range(num_cameras)))
+        video_widget = VideoGridWidget(camera_indices=camera_indices)
+        video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(video_widget)
+
+        # Right gauges (vertical)
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(0)
+        for g in right_gauges:
+            self._apply_gauge_sizing(g, config, base_size)
+            right_layout.addWidget(g)
+        layout.addLayout(right_layout)
+
+        return layout
     def _create_video_grid_layout(self, config):
         from PyQt6.QtWidgets import QVBoxLayout
         layout = QVBoxLayout()
