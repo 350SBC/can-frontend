@@ -9,7 +9,20 @@ from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import ZMQ_POLL_INTERVAL, MAX_MESSAGES_PER_CYCLE
+from config.settings import (
+    ZMQ_POLL_INTERVAL,
+    MAX_MESSAGES_PER_CYCLE,
+    DISPLAY_SIGNAL_WHITELIST,
+    DISPLAY_SIGNAL_BLACKLIST,
+    SIGNAL_RATE_LIMITS,
+    MAX_SIGNALS_PER_MESSAGE,
+    FAST_FORWARD_SIGNAL_UPDATES,
+    ZMQ_SUB_RCVHWM,
+    ZMQ_SUB_CONFLATE,
+    BACKLOG_STRATEGY,
+    MAX_DRAIN_PER_POLL,
+    MERGE_SIGNALS_DURING_COLLAPSE,
+)
 
 
 class ZMQWorker(QObject):
@@ -31,6 +44,8 @@ class ZMQWorker(QObject):
         self.pub_socket = None
         self.req_socket = None
         self._listening = False
+        # Track last emission times for rate limiting
+        self._last_signal_emit = {}
 
     def connect_sockets(self):
         """Connects frontend ZeroMQ sockets to the backend."""
@@ -51,6 +66,14 @@ class ZMQWorker(QObject):
             self.pub_socket.disconnect(f"tcp://{self.backend_ip}:{self.pub_port}")
             self.pub_socket.close()
         self.pub_socket = self.context.socket(zmq.SUB)
+        # Apply socket options to reduce backlog
+        try:
+            if ZMQ_SUB_RCVHWM is not None:
+                self.pub_socket.setsockopt(zmq.RCVHWM, ZMQ_SUB_RCVHWM)
+            if ZMQ_SUB_CONFLATE:
+                self.pub_socket.setsockopt(zmq.CONFLATE, 1)
+        except Exception:
+            pass
         self.pub_socket.connect(f"tcp://{self.backend_ip}:{self.pub_port}")
         self.pub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
         self.backend_status_message.emit(f"Connected to Backend PUB on {self.backend_ip}:{self.pub_port}")
@@ -74,17 +97,51 @@ class ZMQWorker(QObject):
         """Aggressively poll for messages to minimize latency."""
         if not self._listening or not self.pub_socket:
             return
-            
         try:
-            # Process more messages per timer cycle for high-throughput scenarios
-            messages_processed = 0
-            while messages_processed < MAX_MESSAGES_PER_CYCLE:  # Increased limit
-                if self.pub_socket.poll(0) & zmq.POLLIN:  # Non-blocking poll
-                    message = self.pub_socket.recv_json(zmq.NOBLOCK)
-                    self._process_message(message)
-                    messages_processed += 1
-                else:
-                    break
+            if BACKLOG_STRATEGY == "collapse_latest":
+                # Drain as many messages as are immediately available (bounded) and keep only latest per signal
+                drained = 0
+                latest_messages = []
+                while drained < MAX_DRAIN_PER_POLL and (self.pub_socket.poll(0) & zmq.POLLIN):
+                    try:
+                        msg = self.pub_socket.recv_json(zmq.NOBLOCK)
+                        latest_messages.append(msg)
+                        drained += 1
+                    except zmq.Again:
+                        break
+                if latest_messages:
+                    if MERGE_SIGNALS_DURING_COLLAPSE:
+                        # Build one synthetic combined decoded message using last value per signal
+                        combined = None
+                        signal_map = {}
+                        for m in latest_messages:
+                            if m.get('type') != 'decoded':
+                                continue
+                            if combined is None:
+                                combined = {k: v for k, v in m.items() if k != 'data'}
+                                combined['type'] = 'decoded'
+                                combined['data'] = {}
+                            for s, val in m.get('data', {}).items():
+                                signal_map[s] = val
+                        if combined is not None:
+                            combined['data'].update(signal_map)
+                            self._process_message(combined)
+                    else:
+                        # Just process only the last decoded message encountered
+                        for m in reversed(latest_messages):
+                            if m.get('type') == 'decoded':
+                                self._process_message(m)
+                                break
+            else:
+                # Original bounded loop
+                messages_processed = 0
+                while messages_processed < MAX_MESSAGES_PER_CYCLE:
+                    if self.pub_socket.poll(0) & zmq.POLLIN:
+                        message = self.pub_socket.recv_json(zmq.NOBLOCK)
+                        self._process_message(message)
+                        messages_processed += 1
+                    else:
+                        break
         except zmq.Again:
             # No messages available, normal condition
             pass
@@ -106,8 +163,47 @@ class ZMQWorker(QObject):
         msg_type = message.get("type")
         if msg_type == "decoded":
             self.decoded_message_received.emit(message)
-            for signal_name, value in message['data'].items():
-                self.new_signal_value.emit(signal_name, float(value))
+            data_items = list(message.get('data', {}).items())
+
+            # Apply per-message cap if configured
+            if MAX_SIGNALS_PER_MESSAGE > 0 and len(data_items) > MAX_SIGNALS_PER_MESSAGE:
+                data_items = data_items[:MAX_SIGNALS_PER_MESSAGE]
+
+            # Optional fast-forward: keep only most recent per signal (compress backlog)
+            if FAST_FORWARD_SIGNAL_UPDATES:
+                compressed = {}
+                for k, v in data_items:
+                    compressed[k] = v
+                data_iterable = compressed.items()
+            else:
+                data_iterable = data_items
+
+            for signal_name, value in data_iterable:
+                sig_l = signal_name.lower()
+
+                # Whitelist filtering
+                if DISPLAY_SIGNAL_WHITELIST and sig_l not in DISPLAY_SIGNAL_WHITELIST:
+                    continue
+                # Blacklist filtering
+                if sig_l in DISPLAY_SIGNAL_BLACKLIST:
+                    continue
+                # Rate limiting
+                if sig_l in SIGNAL_RATE_LIMITS:
+                    min_interval = SIGNAL_RATE_LIMITS[sig_l]
+                    last_t = self._last_signal_emit.get(sig_l, 0)
+                    # Use time.monotonic for stable intervals
+                    import time as _t
+                    now = _t.monotonic()
+                    if now - last_t < min_interval:
+                        continue
+                    self._last_signal_emit[sig_l] = now
+
+                # Emit filtered signal
+                try:
+                    self.new_signal_value.emit(signal_name, float(value))
+                except Exception:
+                    # Ignore malformed values
+                    pass
         elif msg_type == "raw":
             self.raw_message_received.emit(message)
 
@@ -152,3 +248,19 @@ class ZMQWorker(QObject):
             self.backend_status_message.emit("ZMQ sockets disconnected.")
         except Exception as e:
             self.backend_error_message.emit(f"Error during ZMQ shutdown: {e}")
+
+    def flush_backlog(self):
+        """Attempt to drain any immediately available messages without processing backlog slowly."""
+        if not self.pub_socket:
+            return
+        try:
+            drained = 0
+            while self.pub_socket.poll(0) & zmq.POLLIN:
+                _ = self.pub_socket.recv_json(zmq.NOBLOCK)
+                drained += 1
+                if drained > 1000:  # safety cap
+                    break
+            if drained:
+                self.backend_status_message.emit(f"Flushed {drained} queued messages.")
+        except Exception:
+            pass

@@ -11,13 +11,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QLineEdit, QMessageBox, QFormLayout,
-                            QFrame)
-from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal
-import pyqtgraph as pg
+                            QFrame, QGridLayout, QComboBox)
+from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal, Qt
 
 from communication.zmq_worker import ZMQWorker
 from widgets.gauges import RoundGauge, GaugeConfig, ModernGauge, NeonGauge
 from widgets.send_message_widget import CollapsibleSendMessageWidget  # Import the new widget
+from gui.layout_manager import LayoutManager
 # from widgets.message_table import MessageTableWidget  # Uncomment when ready
 from config.settings import *
 
@@ -59,37 +59,34 @@ class CANDashboardMainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.plot_data = {}
-        self.plots = {}
-        self.current_plot_row = 0
-        self.current_plot_col = 0
         self.gauges = {}  # Store gauge references
-        
-        # Performance optimization: separate handling for gauges and plots
-        self.pending_gauge_updates = {}  # Buffer for gauge updates (faster)
-        self.pending_plot_updates = {}   # Buffer for plot updates (slower)
-        self.last_gauge_update_time = {}  # Track last gauge update time
-        self.last_plot_update_time = {}   # Track last plot update time
-        self.gauge_update_interval = GAUGE_UPDATE_INTERVAL   # Ultra-fast for gauges
-        self.plot_update_interval = PLOT_UPDATE_INTERVAL     # Slower for plots
-        
+        # Performance optimization: gauge-only (plots removed)
+        self.pending_gauge_updates = {}
+        self.last_gauge_update_time = {}
+        self.gauge_update_interval = GAUGE_UPDATE_INTERVAL
         # Critical signals that get immediate updates (bypass buffering)
         self.critical_signals = {"rpm", "engine_rpm", "engine_speed", "speed", "vehicle_speed"}
-        
         # Define gauge configurations
         self.gauge_configs = [
             GaugeConfig("Engine RPM", 0, 6500, ["rpm", "engine_rpm", "engine_speed"], 14, "RPM"),
             GaugeConfig("Speed", 0, 100, ["speed", "vehicle_speed", "mph"], 21, "MPH"),
             GaugeConfig("Temperature", 60, 220, ["cts", "engine_temp", "temperature"], 7, "°f"),
-            GaugeConfig("AFR", 0, 20, ["afr", "air_fuel_ratio"], 6, ":1"),
+            GaugeConfig("AFR", 0, 20, ["average_afr", "air_fuel_ratio"], 6, ":1"),
             GaugeConfig("Battery Voltage", 10, 16, ["battery_voltage", "voltage"], 7, "V"),
+            GaugeConfig("Oil Pressure", 0, 100, ["oil", "oil_psi"], 6, "PSI"),
         ]
-        
+        # Enable multitouch events
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
+
+        # Initialize layout manager
+        self.layout_manager = LayoutManager()
+        self.current_layout_name = DEFAULT_LAYOUT
+        self.gauge_widgets = []  # Store gauge widgets for layout switching
+
         self._setup_window()
         self._setup_zmq_worker()
         self._init_ui()
         self._connect_signals()
-        self._init_plotting()
         self._setup_update_timer()
         self._auto_connect_and_configure()
 
@@ -130,68 +127,155 @@ class CANDashboardMainWindow(QMainWindow):
 
     def _init_ui(self):
         """Initialize the user interface."""
+        self._setup_layout_controls()
         self._setup_gauges()
         # self._setup_message_table()  # Uncomment when ready
-        self._setup_plot_widget()
         self._setup_send_message_section()
         self._setup_status_bar()
 
-    def _setup_gauges(self):
-        """Set up gauge widgets based on configurations."""
-        # Create a scrollable area for gauges or use a grid
-        gauge_layout = QHBoxLayout()
+    def _setup_layout_controls(self):
+        """Set up layout switching controls."""
+        # Create layout control widget
+        layout_control_widget = QWidget()
+        layout_control_layout = QHBoxLayout(layout_control_widget)
         
-        # Create gauges from configurations (limit to first few for space)
-        gauge_style = globals().get('GAUGE_STYLE', 'classic')
-        for config in self.gauge_configs[:3]:  # Show first 3 gauges
-            if gauge_style == 'modern':
-                # Use NeonGauge as primary modern style
-                gauge = NeonGauge(
-                    min_value=config.min_value,
-                    max_value=config.max_value,
-                    title=config.title,
-                    unit=config.unit,
-                    num_ticks=5 if config.title.lower() != 'afr' else 0
-                )
-            elif gauge_style == 'modern_arc':
-                gauge = ModernGauge(
-                    min_value=config.min_value,
-                    max_value=config.max_value,
-                    title=config.display_title,
-                    num_ticks=config.num_ticks
-                )
-            else:
-                gauge = RoundGauge(
-                    min_value=config.min_value,
-                    max_value=config.max_value,
-                    title=config.display_title,
-                    num_ticks=config.num_ticks
-                )
-            
-            # Store gauge with signal name mapping
-            for signal_name in config.signal_names:
-                self.gauges[signal_name.lower()] = gauge
-            
-            gauge_layout.addWidget(gauge)
+        # Layout selector
+        layout_label = QLabel("Layout:")
+        self.layout_combo = QComboBox()
         
-        gauge_layout.addStretch()
-        self.main_layout.addLayout(gauge_layout)
-
-    def _setup_plot_widget(self):
-        """Set up the plot widget as a collapsible widget."""
-        # Create collapsible container
-        self.plot_container = CollapsibleWidget("▶ Live Signal Plots")
+        # Populate combo box with available layouts
+        for layout_key, layout_config in LAYOUT_CONFIGS.items():
+            self.layout_combo.addItem(layout_config["name"], layout_key)
         
-        # Create the plot widget
-        self.plot_widget = pg.GraphicsLayoutWidget(parent=self)
-        self.plot_widget.ci.layout.setContentsMargins(0, 0, 0, 0)
-        self.plot_widget.setMinimumHeight(PLOT_MINIMUM_HEIGHT)
+        # Set current layout
+        index = self.layout_combo.findData(self.current_layout_name)
+        if index >= 0:
+            self.layout_combo.setCurrentIndex(index)
         
-        # Add plot widget to the collapsible container
-        self.plot_container.add_content_widget(self.plot_widget)
+        # Connect signal
+        self.layout_combo.currentIndexChanged.connect(self._on_layout_changed)
+        
+        layout_control_layout.addWidget(layout_label)
+        layout_control_layout.addWidget(self.layout_combo)
+        layout_control_layout.addStretch()  # Push everything to the left
         
         # Add to main layout
-        self.main_layout.addWidget(self.plot_container)
+        self.main_layout.addWidget(layout_control_widget)
+
+    def _setup_gauges(self):
+        """Set up gauge widgets based on configurations."""
+        # Create gauge widgets (only once)
+        if not self.gauge_widgets:  # Only create if not already created
+            gauge_style = globals().get('GAUGE_STYLE', 'classic')
+            for config in self.gauge_configs:
+                if gauge_style == 'modern':
+                    # Use NeonGauge as primary modern style
+                    gauge = NeonGauge(
+                        min_value=config.min_value,
+                        max_value=config.max_value,
+                        title=config.title,
+                        unit=config.unit,
+                        num_ticks=5 if config.title.lower() != 'afr' else 0
+                    )
+                elif gauge_style == 'modern_arc':
+                    gauge = ModernGauge(
+                        min_value=config.min_value,
+                        max_value=config.max_value,
+                        title=config.display_title,
+                        num_ticks=config.num_ticks
+                    )
+                else:
+                    gauge = RoundGauge(
+                        min_value=config.min_value,
+                        max_value=config.max_value,
+                        title=config.display_title,
+                        num_ticks=config.num_ticks
+                    )
+                
+                # Store config reference for layout manager
+                gauge.config = config
+                self.gauge_widgets.append(gauge)
+                
+                # Store gauge with signal name mapping
+                for signal_name in config.signal_names:
+                    self.gauges[signal_name.lower()] = gauge
+        
+        # Apply current layout
+        self._apply_layout(self.current_layout_name)
+
+    def _apply_layout(self, layout_name):
+        """Apply a specific layout to the gauges."""
+        # Remove existing gauge layout if it exists
+        if hasattr(self, 'gauge_layout') and self.gauge_layout:
+            self._clear_layout(self.gauge_layout)
+            self.main_layout.removeItem(self.gauge_layout)
+        
+        # Reset gauge sizes before applying new layout
+        self.layout_manager.reset_gauge_sizes(self.gauge_widgets)
+        
+        # Get current window size for relative calculations
+        window_size = (self.width(), self.height())
+        
+        # Create new layout using layout manager
+        try:
+            self.gauge_layout = self.layout_manager.create_layout(layout_name, self.gauge_widgets, window_size)
+            self.current_layout_name = layout_name
+            
+            # Insert gauge layout after layout controls but before plots
+            self.main_layout.insertLayout(1, self.gauge_layout)
+            
+        except Exception as e:
+            print(f"Error applying layout {layout_name}: {e}")
+            # Fallback to default grid layout
+            self._apply_fallback_layout()
+
+    def resizeEvent(self, event):
+        """Handle window resize events to update gauge sizes."""
+        super().resizeEvent(event)
+        
+        # Update layout manager with new window size
+        if hasattr(self, 'layout_manager') and hasattr(self, 'current_layout_name'):
+            self.layout_manager.set_window_size(self.width(), self.height())
+            
+            # Re-apply current layout with new window size if using relative sizing
+            if (hasattr(self, 'current_layout_name') and 
+                self.current_layout_name in LAYOUT_CONFIGS):
+                config = LAYOUT_CONFIGS[self.current_layout_name]
+                if (config.get("use_proportional_sizing") or 
+                    any("scale_factor" in gauge_config for gauge_config in 
+                        config.get("gauge_sizes", {}).values())):
+                    # Only re-apply if layout uses relative sizing
+                    self._apply_layout(self.current_layout_name)
+
+    def _apply_fallback_layout(self):
+        """Apply a fallback grid layout if the selected layout fails."""
+        self.gauge_layout = QGridLayout()
+        self.gauge_layout.setSpacing(20)
+        
+        # Simple 2x3 grid
+        for i, gauge in enumerate(self.gauge_widgets):
+            row = i // 3
+            col = i % 3
+            self.gauge_layout.addWidget(gauge, row, col)
+        
+        self.main_layout.insertLayout(1, self.gauge_layout)
+
+    def _clear_layout(self, layout):
+        """Clear all widgets from a layout without deleting them."""
+        if layout is not None:
+            while layout.count():
+                child = layout.takeAt(0)
+                if child.widget():
+                    child.widget().setParent(None)
+                elif child.layout():
+                    self._clear_layout(child.layout())
+
+    def _on_layout_changed(self):
+        """Handle layout selection change."""
+        layout_key = self.layout_combo.currentData()
+        if layout_key and layout_key != self.current_layout_name:
+            self._apply_layout(layout_key)
+            self.update_status_bar(f"Layout changed to: {LAYOUT_CONFIGS[layout_key]['name']}")
 
     def _setup_send_message_section(self):
         """Set up the send message section using the new widget."""
@@ -206,9 +290,7 @@ class CANDashboardMainWindow(QMainWindow):
         self.statusBar = self.statusBar()
         self.statusBar.showMessage("Ready")
 
-    def _init_plotting(self):
-        """Initialize plotting parameters."""
-        pass
+    # Plot initialization removed
 
     def _auto_connect_and_configure(self):
         """Automatically connect and configure the backend."""
@@ -270,94 +352,43 @@ class CANDashboardMainWindow(QMainWindow):
         self.statusBar.showMessage(f"ERROR: {message}", 5000)
 
     def update_display_data(self, signal_name, value):
-        """Ultra-responsive signal updates with immediate processing for critical signals."""
-        current_time = time.time()
+        """Ultra-responsive signal updates (plots removed)."""
         signal_lower = signal_name.lower()
-        
-        # Critical signals get immediate gauge updates (no buffering)
-        if signal_lower in self.critical_signals and signal_lower in self.gauges:
-            self.gauges[signal_lower].set_value(value)
-            # Still add to plot buffer for plotting
-            self.pending_plot_updates[signal_name] = {'value': value, 'time': current_time}
-            return
-        
-        # Handle other gauge updates with minimal delay
-        if signal_lower in self.gauges:
-            self.pending_gauge_updates[signal_name] = {'value': value, 'time': current_time}
-        
-        # Handle plot updates with rate limiting (for performance)
-        if signal_name in self.last_plot_update_time:
-            time_diff = (current_time - self.last_plot_update_time[signal_name]) * 1000
-            if time_diff < self.plot_update_interval:
+        # Optional whitelist filtering: if configured, ignore signals not explicitly listed
+        if 'DISPLAY_SIGNAL_WHITELIST' in globals() and DISPLAY_SIGNAL_WHITELIST:
+            if signal_lower not in DISPLAY_SIGNAL_WHITELIST:
                 return
-        
-        self.last_plot_update_time[signal_name] = current_time
-        self.pending_plot_updates[signal_name] = {'value': value, 'time': current_time}
+        # Decide immediate vs buffered based on config and criticality
+        if signal_lower in self.gauges:
+            if REALTIME_GAUGE_UPDATES or signal_lower in self.critical_signals:
+                self.gauges[signal_lower].set_value(value)
+            else:
+                # Buffer latest value only
+                self.pending_gauge_updates[signal_name] = {'value': value, 'time': time.time()}
 
     def _process_pending_updates(self):
-        """Process pending gauge and plot updates separately for optimal performance."""
-        # Process gauge updates (higher priority, more frequent)
+        """Process pending gauge updates (plots removed)."""
         if self.pending_gauge_updates:
-            gauge_updates = self.pending_gauge_updates.copy()
+            updates = self.pending_gauge_updates.copy()
             self.pending_gauge_updates.clear()
-            
-            for signal_name, update_data in gauge_updates.items():
+            for signal_name, update_data in updates.items():
                 value = update_data['value']
                 signal_lower = signal_name.lower()
                 if signal_lower in self.gauges:
                     self.gauges[signal_lower].set_value(value)
-        
-        # Process plot updates (lower priority, less frequent)
-        if self.pending_plot_updates:
-            plot_updates = self.pending_plot_updates.copy()
-            self.pending_plot_updates.clear()
-            
-            for signal_name, update_data in plot_updates.items():
-                value = update_data['value']
-                current_time = update_data['time']
-                self._update_plot_data(signal_name, value, current_time)
 
-    def _update_plot_data(self, signal_name, value, current_time):
-        """Optimized plot data update method."""
-        if signal_name not in self.plot_data:
-            total_plots = len(self.plots)
-            if total_plots >= MAX_PLOTS_PER_ROW * MAX_PLOT_ROWS:
-                return
+    def flush_inflight(self):
+        """Immediately clear any queued updates and drain ZMQ backlog to stop lingering movement."""
+        # Clear GUI-side pending updates
+        self.pending_gauge_updates.clear()
+        # Ask worker to drain socket queue
+        try:
+            if hasattr(self, 'zmq_worker'):
+                self.zmq_worker.flush_backlog()
+        except Exception:
+            pass
 
-            # Create a new plot for this signal
-            plot_item = self.plot_widget.addPlot(
-                row=self.current_plot_row,
-                col=self.current_plot_col,
-                title=signal_name
-            )
-            plot_item.setLabel('bottom', "Time", units='s')
-            plot_item.setLabel('left', "Value")
-            plot_item.showGrid(x=True, y=True)
-            plot_curve = plot_item.plot(pen='y')
-
-            # Store references to data and curve
-            self.plot_data[signal_name] = {
-                'time': [], 'value': [], 'curve': plot_curve, 'start_time': current_time
-            }
-            self.plots[signal_name] = plot_item
-
-            # Move to the next position in the plot grid
-            self.current_plot_col += 1
-            if self.current_plot_col >= MAX_PLOTS_PER_ROW:
-                self.current_plot_col = 0
-                self.current_plot_row += 1
-
-        data_entry = self.plot_data[signal_name]
-        data_entry['time'].append(current_time - data_entry['start_time'])
-        data_entry['value'].append(value)
-
-        # Keep only the most recent points for performance
-        if len(data_entry['time']) > MAX_PLOT_POINTS:
-            data_entry['time'] = data_entry['time'][-MAX_PLOT_POINTS:]
-            data_entry['value'] = data_entry['value'][-MAX_PLOT_POINTS:]
-
-        # Update the plot with new data (this is still needed for real-time plotting)
-        data_entry['curve'].setData(data_entry['time'], data_entry['value'])
+    # Plot update method removed
 
     def closeEvent(self, event):
         """Handle the application close event for graceful shutdown."""
@@ -383,3 +414,33 @@ class CANDashboardMainWindow(QMainWindow):
         except Exception as e:
             print(f"Error during shutdown: {e}")
             event.accept()
+
+    def event(self, event):
+        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtWidgets import QApplication
+        if event.type() in (event.Type.TouchBegin, event.Type.TouchUpdate):
+            touch_points = event.points()  # PyQt6 uses points()
+            if len(touch_points) == 1:
+                pos = touch_points[0].position()
+                widget = self.childAt(pos.toPoint())
+                if widget:
+                    mouse_event = QMouseEvent(QMouseEvent.Type.MouseButtonPress, pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(widget, mouse_event)
+                    mouse_release = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(widget, mouse_release)
+                return True
+            elif len(touch_points) == 2:
+                pos1 = touch_points[0].position()
+                pos2 = touch_points[1].position()
+                avg_x = (pos1.x() + pos2.x()) / 2
+                avg_y = (pos1.y() + pos2.y()) / 2
+                avg_qpointf = QPointF(avg_x, avg_y)
+                widget = self.childAt(QPointF(avg_x, avg_y).toPoint())
+                if widget:
+                    mouse_event = QMouseEvent(QMouseEvent.Type.MouseButtonPress, avg_qpointf, Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(widget, mouse_event)
+                    mouse_release = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, avg_qpointf, Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(widget, mouse_release)
+                return True
+        return super().event(event)
