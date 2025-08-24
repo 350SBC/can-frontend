@@ -416,9 +416,9 @@ class CANDashboardMainWindow(QMainWindow):
             event.accept()
 
     def event(self, event):
-        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtGui import QMouseEvent, QAction
         from PyQt6.QtCore import QPointF, Qt
-        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtWidgets import QApplication, QMenu
         if event.type() in (event.Type.TouchBegin, event.Type.TouchUpdate):
             touch_points = event.points()  # PyQt6 uses points()
             if len(touch_points) == 1:
@@ -443,4 +443,36 @@ class CANDashboardMainWindow(QMainWindow):
                     mouse_release = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, avg_qpointf, Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier)
                     QApplication.sendEvent(widget, mouse_release)
                 return True
+            elif len(touch_points) == 3:
+                # Three finger tap: show layout selection menu at average position
+                pos1 = touch_points[0].position()
+                pos2 = touch_points[1].position()
+                pos3 = touch_points[2].position()
+                avg_x = (pos1.x() + pos2.x() + pos3.x()) / 3
+                avg_y = (pos1.y() + pos2.y() + pos3.y()) / 3
+                avg_qpointf = QPointF(avg_x, avg_y)
+                menu = QMenu(self)
+                current_layout = self.current_layout_name
+                for layout_key, layout_config in LAYOUT_CONFIGS.items():
+                    if layout_key != current_layout:
+                        action = QAction(layout_config["name"], self)
+                        action.triggered.connect(lambda checked, key=layout_key: self._apply_layout(key))
+                        menu.addAction(action)
+                menu.exec(self.mapToGlobal(avg_qpointf.toPoint()))
+                return True
         return super().event(event)
+
+    def mousePressEvent(self, event):
+        from PyQt6.QtWidgets import QMenu, QAction
+        if event.button() == Qt.MouseButton.MiddleButton:
+            # Center click: show layout selection menu at cursor position
+            menu = QMenu(self)
+            current_layout = self.current_layout_name
+            for layout_key, layout_config in LAYOUT_CONFIGS.items():
+                if layout_key != current_layout:
+                    action = QAction(layout_config["name"], self)
+                    action.triggered.connect(lambda checked, key=layout_key: self._apply_layout(key))
+                    menu.addAction(action)
+            menu.exec(event.globalPos())
+        else:
+            super().mousePressEvent(event)
