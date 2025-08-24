@@ -48,6 +48,8 @@ class LayoutManager:
             return self._create_grid_layout(config, gauges)
         elif config["type"] == "custom":
             return self._create_custom_layout(config, gauges)
+        elif config["type"] == "custom_grid":
+            return self._create_custom_grid_layout(config, gauges)
         elif config["type"] == "video_grid":
             return self._create_video_grid_layout(config)
         elif config["type"] == "gauges_video_center":
@@ -112,6 +114,60 @@ class LayoutManager:
         layout.addWidget(video_widget)
         return layout
     
+    def _create_custom_grid_layout(self, config, widgets):
+        """Create a custom grid layout with top large gauges, side small gauges, and bottom row."""
+        from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QSizePolicy
+        
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(config.get("spacing", 15))
+        
+        # Get widget lists from config
+        top_large_names = set(config.get("top_large", []))
+        side_small_names = set(config.get("side_small", []))
+        bottom_row_names = set(config.get("bottom_row", []))
+        
+        # Split widgets by name (match against config.title)
+        top_large_widgets = [w for w in widgets if getattr(w.config, "title", "") in top_large_names]
+        side_small_widgets = [w for w in widgets if getattr(w.config, "title", "") in side_small_names]
+        bottom_row_widgets = [w for w in widgets if getattr(w.config, "title", "") in bottom_row_names]
+        
+        # Top section: side small | large widgets | side small
+        top_layout = QHBoxLayout()
+        top_layout.setSpacing(config.get("spacing", 15))
+        
+        # Left side small widget
+        if len(side_small_widgets) > 0:
+            left_small = side_small_widgets[0]
+            self._apply_widget_sizing(left_small, config, 180)
+            top_layout.addWidget(left_small)
+        
+        # Large widgets in center
+        large_layout = QHBoxLayout()
+        large_layout.setSpacing(config.get("spacing", 15))
+        for widget in top_large_widgets:
+            self._apply_widget_sizing(widget, config, 180)
+            large_layout.addWidget(widget)
+        top_layout.addLayout(large_layout)
+        
+        # Right side small widget
+        if len(side_small_widgets) > 1:
+            right_small = side_small_widgets[1]
+            self._apply_widget_sizing(right_small, config, 180)
+            top_layout.addWidget(right_small)
+        
+        main_layout.addLayout(top_layout)
+        
+        # Bottom row: grid of remaining widgets
+        if bottom_row_widgets:
+            bottom_layout = QHBoxLayout()
+            bottom_layout.setSpacing(config.get("spacing", 15))
+            for widget in bottom_row_widgets:
+                self._apply_widget_sizing(widget, config, 180)
+                bottom_layout.addWidget(widget)
+            main_layout.addLayout(bottom_layout)
+        
+        return main_layout
+    
     def _create_grid_layout(self, config, gauges):
         """Create a grid layout based on configuration."""
         layout = QGridLayout()
@@ -150,53 +206,57 @@ class LayoutManager:
     
     def _apply_gauge_sizing(self, gauge, config, base_size):
         """Apply gauge-specific sizing based on configuration."""
+        self._apply_widget_sizing(gauge, config, base_size)
+    
+    def _apply_widget_sizing(self, widget, config, base_size):
+        """Apply widget-specific sizing based on configuration (works for both gauges and indicators)."""
         # Reset any previous size constraints and set size policy
-        gauge.setMinimumSize(0, 0)
-        gauge.setMaximumSize(16777215, 16777215)  # QWIDGETSIZE_MAX
-        gauge.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        widget.setMinimumSize(0, 0)
+        widget.setMaximumSize(16777215, 16777215)  # QWIDGETSIZE_MAX
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
-        if not hasattr(gauge, 'config'):
+        if not hasattr(widget, 'config'):
             return
             
-        gauge_name = gauge.config.name if hasattr(gauge.config, 'name') else gauge.config.title
+        widget_name = widget.config.name if hasattr(widget.config, 'name') else widget.config.title
         
         # Apply proportional sizing if configured
         if config.get("use_proportional_sizing") and "gauge_proportions" in config:
-            if gauge_name in config["gauge_proportions"]:
-                self._apply_proportional_sizing(gauge, config["gauge_proportions"][gauge_name])
+            if widget_name in config["gauge_proportions"]:
+                self._apply_proportional_sizing(widget, config["gauge_proportions"][widget_name])
                 return
         
         # Apply scale factor sizing if configured
-        if "gauge_sizes" in config and gauge_name in config["gauge_sizes"]:
-            size_config = config["gauge_sizes"][gauge_name]
+        if "gauge_sizes" in config and widget_name in config["gauge_sizes"]:
+            size_config = config["gauge_sizes"][widget_name]
             
             if "scale_factor" in size_config:
                 scale = size_config["scale_factor"]
                 scaled_size = int(base_size * scale)
                 
                 # Set minimum size to maintain proportions, but allow expansion
-                gauge.setMinimumSize(scaled_size, scaled_size)
+                widget.setMinimumSize(scaled_size, scaled_size)
                 
                 # Adjust size policy based on scale factor
                 if scale > 1.0:
-                    # Larger gauges get more space preference
-                    gauge.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+                    # Larger widgets get more space preference
+                    widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
                 else:
-                    # Smaller gauges are more constrained
-                    gauge.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-                    gauge.setMaximumSize(int(scaled_size * 1.5), int(scaled_size * 1.5))
+                    # Smaller widgets are more constrained
+                    widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+                    widget.setMaximumSize(int(scaled_size * 1.5), int(scaled_size * 1.5))
             
             # Legacy support for fixed min/max sizes
             elif "min_size" in size_config:
                 min_width, min_height = size_config["min_size"]
-                gauge.setMinimumSize(min_width, min_height)
+                widget.setMinimumSize(min_width, min_height)
                 
                 if "max_size" in size_config:
                     max_width, max_height = size_config["max_size"]
-                    gauge.setMaximumSize(max_width, max_height)
+                    widget.setMaximumSize(max_width, max_height)
 
-    def _apply_proportional_sizing(self, gauge, proportion_config):
-        """Apply proportional sizing based on window size."""
+    def _apply_proportional_sizing(self, widget, proportion_config):
+        """Apply proportional sizing based on window size (works for both gauges and indicators)."""
         if not self.window_size:
             return
             
@@ -212,8 +272,8 @@ class LayoutManager:
         target_width = int(available_width * width_percent / 100)
         target_height = int(available_height * height_percent / 100)
         
-        gauge.setMinimumSize(target_width, target_height)
-        gauge.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        widget.setMinimumSize(target_width, target_height)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     
     def _create_custom_layout(self, config, gauges):
         """Create a custom layout (e.g., focus on primary gauges)."""
