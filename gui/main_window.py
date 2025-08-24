@@ -464,6 +464,7 @@ class CANDashboardMainWindow(QMainWindow):
 
     def mousePressEvent(self, event):
         from PyQt6.QtWidgets import QMenu, QAction
+        from PyQt6.QtCore import Qt
         if event.button() == Qt.MouseButton.MiddleButton:
             # Center click: show layout selection menu at cursor position
             menu = QMenu(self)
@@ -474,5 +475,6 @@ class CANDashboardMainWindow(QMainWindow):
                     action.triggered.connect(lambda checked, key=layout_key: self._apply_layout(key))
                     menu.addAction(action)
             menu.exec(event.globalPos())
+            event.accept()
         else:
             super().mousePressEvent(event)
