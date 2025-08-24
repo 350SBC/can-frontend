@@ -206,7 +206,7 @@ DEFAULT_LAYOUT = "rpm_speed_focus"
 # Auto-connection Configuration
 AUTO_DBC_PATH = "dbc/test.dbc"
 AUTO_INTERFACE = "socketcan"
-AUTO_CHANNEL = "vcan0"
+AUTO_CHANNEL = "can0"
 AUTO_BITRATE = 500000
 
 # (Legacy RPM gauge range & signal aliases removed: RPM_GAUGE_MIN, RPM_GAUGE_MAX, RPM_SIGNAL_NAMES were unusede
