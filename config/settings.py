@@ -203,6 +203,7 @@ LAYOUT_CONFIGS = {
 
 # Default layout
 DEFAULT_LAYOUT = "rpm_speed_focus"
+#EFAULT_LAYOUT = "gauges_video_center"
 
 # Auto-connection Configuration
 AUTO_DBC_PATH = "dbc/test.dbc"
