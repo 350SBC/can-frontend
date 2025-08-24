@@ -52,7 +52,7 @@ LAYOUT_CONFIGS = {
         "name": "Gauges Left/Right, Video Center",
         "type": "gauges_video_center",
         "num_cameras": 2,
-        "camera_indices": [0, 2],
+        "camera_indices": [0, 3],
     "gauge_left": ["RPM", "Speed", "Temperature"],
     "gauge_right": ["AFR", "Battery Voltage", "Oil Pressure"],
         "spacing": 0,
@@ -185,7 +185,7 @@ DEFAULT_LAYOUT = "gauges_video_center"
 # Auto-connection Configuration
 AUTO_DBC_PATH = "dbc/test.dbc"
 AUTO_INTERFACE = "socketcan"
-AUTO_CHANNEL = "vcan0"
+AUTO_CHANNEL = "can0"
 AUTO_BITRATE = 500000
 
 # (Legacy RPM gauge range & signal aliases removed: RPM_GAUGE_MIN, RPM_GAUGE_MAX, RPM_SIGNAL_NAMES were unused)
