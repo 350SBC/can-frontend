@@ -183,7 +183,7 @@ LAYOUT_CONFIGS = {
         "spacing": 15,
         "top_large": ["Engine RPM", "Speed"],  # Two large gauges on top row, centered
         "side_small": ["Temperature", "AFR"],  # Small gauges on left and right of large ones
-        "bottom_row": ["Battery Voltage", "Oil Pressure", "Timing", "Pedal Position", "MAP", "Closed Loop"],  # Rest below including indicator
+        "bottom_row": ["Battery Voltage", "Oil Pressure", "Timing", "Pedal Position", "MAP", "Closed Loop", "Gear", "Lambda"],  # Rest below including indicator and displays
         "gauge_sizes": {
             "Engine RPM": {"scale_factor": 1.6},  # Large top gauges
             "Speed": {"scale_factor": 1.6},
@@ -194,7 +194,9 @@ LAYOUT_CONFIGS = {
             "Timing": {"scale_factor": 0.8},
             "Pedal Position": {"scale_factor": 0.8},
             "MAP": {"scale_factor": 0.8},
-            "Closed Loop": {"scale_factor": 0.6}  # Indicator light - smaller than gauges
+            "Closed Loop": {"scale_factor": 0.6},  # Indicator light - smaller than gauges
+            "Gear": {"scale_factor": 0.7},  # Seven-segment displays
+            "Lambda": {"scale_factor": 0.7}
         }
     }
 }
@@ -205,7 +207,7 @@ DEFAULT_LAYOUT = "rpm_speed_focus"
 # Auto-connection Configuration
 AUTO_DBC_PATH = "dbc/test.dbc"
 AUTO_INTERFACE = "socketcan"
-AUTO_CHANNEL = "can0"
+AUTO_CHANNEL = "vcan0"
 AUTO_BITRATE = 500000
 
 # (Legacy RPM gauge range & signal aliases removed: RPM_GAUGE_MIN, RPM_GAUGE_MAX, RPM_SIGNAL_NAMES were unusede

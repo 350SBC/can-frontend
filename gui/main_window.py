@@ -17,6 +17,7 @@ from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal,
 from communication.zmq_worker import ZMQWorker
 from widgets.gauges import RoundGauge, GaugeConfig, ModernGauge, NeonGauge
 from widgets.indicator_light import IndicatorLight, IndicatorConfig, IndicatorColors
+from widgets.seven_segment_display import SevenSegmentDisplay, SevenSegmentConfig, SevenSegmentColors
 from widgets.send_message_widget import CollapsibleSendMessageWidget  # Import the new widget
 from gui.layout_manager import LayoutManager
 # from widgets.message_table import MessageTableWidget  # Uncomment when ready
@@ -62,6 +63,7 @@ class CANDashboardMainWindow(QMainWindow):
         super().__init__()
         self.gauges = {}  # Store gauge references
         self.indicators = {}  # Store indicator light references
+        self.displays = {}  # Store seven-segment display references
         # Performance optimization: gauge-only (plots removed)
         self.pending_gauge_updates = {}
         self.last_gauge_update_time = {}
@@ -89,6 +91,16 @@ class CANDashboardMainWindow(QMainWindow):
                           size=50, 
                           threshold=0.5),
         ]
+        
+        # Define seven-segment display configurations
+        self.display_configs = [
+            SevenSegmentConfig("Gear", ["gear", "current_gear"], digits=1, 
+                             color_on=SevenSegmentColors.GREEN, show_unit=False),
+            SevenSegmentConfig("Lambda", ["lambda", "lambda_value"], digits=4, decimal_places=2,
+                             color_on=SevenSegmentColors.BLUE, unit="λ"),
+            SevenSegmentConfig("Boost", ["boost_psi", "turbo_pressure"], digits=3, decimal_places=1,
+                             color_on=SevenSegmentColors.YELLOW, unit="PSI"),
+        ]
         # Enable multitouch events
         self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
 
@@ -97,6 +109,7 @@ class CANDashboardMainWindow(QMainWindow):
         self.current_layout_name = DEFAULT_LAYOUT
         self.gauge_widgets = []  # Store gauge widgets for layout switching
         self.indicator_widgets = []  # Store indicator widgets for layout switching
+        self.display_widgets = []  # Store seven-segment display widgets for layout switching
 
         self._setup_window()
         self._setup_zmq_worker()
@@ -236,6 +249,19 @@ class CANDashboardMainWindow(QMainWindow):
                 for signal_name in config.signal_names:
                     self.indicators[signal_name.lower()] = indicator
         
+        # Create seven-segment display widgets (only once)
+        if not self.display_widgets:  # Only create if not already created
+            for config in self.display_configs:
+                display = SevenSegmentDisplay(config)
+                
+                # Store config reference for layout manager
+                display.config = config
+                self.display_widgets.append(display)
+                
+                # Store display with signal name mapping
+                for signal_name in config.signals:
+                    self.displays[signal_name.lower()] = display
+        
         # Apply current layout
         self._apply_layout(self.current_layout_name)
 
@@ -246,15 +272,15 @@ class CANDashboardMainWindow(QMainWindow):
             self._clear_layout(self.gauge_layout)
             self.main_layout.removeItem(self.gauge_layout)
         
-        # Reset gauge sizes before applying new layout
-        self.layout_manager.reset_gauge_sizes(self.gauge_widgets + self.indicator_widgets)
+                # Reset sizes for all widgets to ensure clean layout application
+        self.layout_manager.reset_gauge_sizes(self.gauge_widgets + self.indicator_widgets + self.display_widgets)
         
         # Get current window size for relative calculations
         window_size = (self.width(), self.height())
         
         # Create new layout using layout manager
         try:
-            all_widgets = self.gauge_widgets + self.indicator_widgets
+            all_widgets = self.gauge_widgets + self.indicator_widgets + self.display_widgets
             self.gauge_layout = self.layout_manager.create_layout(layout_name, all_widgets, window_size)
             self.current_layout_name = layout_name
             
@@ -290,7 +316,7 @@ class CANDashboardMainWindow(QMainWindow):
         self.gauge_layout.setSpacing(20)
         
         # Simple 2x3 grid
-        all_widgets = self.gauge_widgets + self.indicator_widgets
+        all_widgets = self.gauge_widgets + self.indicator_widgets + self.display_widgets
         for i, widget in enumerate(all_widgets):
             row = i // 3
             col = i % 3
@@ -409,6 +435,19 @@ class CANDashboardMainWindow(QMainWindow):
             indicator = self.indicators[signal_lower]
             threshold = getattr(indicator.config, 'threshold', 0.5)
             indicator.set_state(value > threshold)
+        
+        # Update seven-segment displays
+        if signal_lower in self.displays:
+            display = self.displays[signal_lower]
+            # Check if this is a text signal (like gear) or numeric
+            if signal_lower in ['gear', 'current_gear'] and isinstance(value, (int, float)):
+                # Convert numeric gear to text (1,2,3,4,5,6,R,N,P)
+                gear_map = {1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 
+                           0: 'N', -1: 'R', 99: 'P'}
+                display.set_text(gear_map.get(int(value), str(int(value))))
+            else:
+                # Numeric display
+                display.set_value(value)
 
     def _process_pending_updates(self):
         """Process pending gauge updates (plots removed)."""
