@@ -16,6 +16,7 @@ from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal,
 
 from communication.zmq_worker import ZMQWorker
 from widgets.gauges import RoundGauge, GaugeConfig, ModernGauge, NeonGauge
+from widgets.indicator_light import IndicatorLight, IndicatorConfig, IndicatorColors
 from widgets.send_message_widget import CollapsibleSendMessageWidget  # Import the new widget
 from gui.layout_manager import LayoutManager
 # from widgets.message_table import MessageTableWidget  # Uncomment when ready
@@ -60,6 +61,7 @@ class CANDashboardMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.gauges = {}  # Store gauge references
+        self.indicators = {}  # Store indicator light references
         # Performance optimization: gauge-only (plots removed)
         self.pending_gauge_updates = {}
         self.last_gauge_update_time = {}
@@ -74,6 +76,18 @@ class CANDashboardMainWindow(QMainWindow):
             GaugeConfig("AFR", 0, 20, ["average_afr", "air_fuel_ratio"], 6, ":1"),
             GaugeConfig("Battery Voltage", 10, 16, ["battery_voltage", "voltage"], 7, "V"),
             GaugeConfig("Oil Pressure", 0, 100, ["oil", "oil_psi"], 6, "PSI"),
+            GaugeConfig("Timing", -10, 50, ["timing", "ignition_timing", "advance"], 8, "°"),
+            GaugeConfig("Pedal Position", 0, 100, ["pedal", "throttle", "tps", "pedal_position"], 6, "%"),
+            GaugeConfig("MAP", 0, 30, ["map", "manifold_pressure", "boost"], 7, "PSI"),
+        ]
+        
+        # Define indicator configurations
+        self.indicator_configs = [
+            IndicatorConfig("Closed Loop", ["closed_loop_status"], 
+                          on_color=IndicatorColors.GREEN, 
+                          off_color=IndicatorColors.RED, 
+                          size=50, 
+                          threshold=0.5),
         ]
         # Enable multitouch events
         self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
@@ -82,6 +96,7 @@ class CANDashboardMainWindow(QMainWindow):
         self.layout_manager = LayoutManager()
         self.current_layout_name = DEFAULT_LAYOUT
         self.gauge_widgets = []  # Store gauge widgets for layout switching
+        self.indicator_widgets = []  # Store indicator widgets for layout switching
 
         self._setup_window()
         self._setup_zmq_worker()
@@ -203,6 +218,24 @@ class CANDashboardMainWindow(QMainWindow):
                 for signal_name in config.signal_names:
                     self.gauges[signal_name.lower()] = gauge
         
+        # Create indicator widgets (only once)
+        if not self.indicator_widgets:  # Only create if not already created
+            for config in self.indicator_configs:
+                indicator = IndicatorLight(
+                    title=config.title,
+                    on_color=config.on_color,
+                    off_color=config.off_color,
+                    size=config.size
+                )
+                
+                # Store config reference for layout manager
+                indicator.config = config
+                self.indicator_widgets.append(indicator)
+                
+                # Store indicator with signal name mapping
+                for signal_name in config.signal_names:
+                    self.indicators[signal_name.lower()] = indicator
+        
         # Apply current layout
         self._apply_layout(self.current_layout_name)
 
@@ -214,14 +247,15 @@ class CANDashboardMainWindow(QMainWindow):
             self.main_layout.removeItem(self.gauge_layout)
         
         # Reset gauge sizes before applying new layout
-        self.layout_manager.reset_gauge_sizes(self.gauge_widgets)
+        self.layout_manager.reset_gauge_sizes(self.gauge_widgets + self.indicator_widgets)
         
         # Get current window size for relative calculations
         window_size = (self.width(), self.height())
         
         # Create new layout using layout manager
         try:
-            self.gauge_layout = self.layout_manager.create_layout(layout_name, self.gauge_widgets, window_size)
+            all_widgets = self.gauge_widgets + self.indicator_widgets
+            self.gauge_layout = self.layout_manager.create_layout(layout_name, all_widgets, window_size)
             self.current_layout_name = layout_name
             
             # Insert gauge layout after layout controls but before plots
@@ -256,10 +290,11 @@ class CANDashboardMainWindow(QMainWindow):
         self.gauge_layout.setSpacing(20)
         
         # Simple 2x3 grid
-        for i, gauge in enumerate(self.gauge_widgets):
+        all_widgets = self.gauge_widgets + self.indicator_widgets
+        for i, widget in enumerate(all_widgets):
             row = i // 3
             col = i % 3
-            self.gauge_layout.addWidget(gauge, row, col)
+            self.gauge_layout.addWidget(widget, row, col)
         
         self.main_layout.insertLayout(1, self.gauge_layout)
 
@@ -368,6 +403,12 @@ class CANDashboardMainWindow(QMainWindow):
             else:
                 # Buffer latest value only
                 self.pending_gauge_updates[signal_name] = {'value': value, 'time': time.time()}
+        
+        # Update indicators
+        if signal_lower in self.indicators:
+            indicator = self.indicators[signal_lower]
+            threshold = getattr(indicator.config, 'threshold', 0.5)
+            indicator.set_state(value > threshold)
 
     def _process_pending_updates(self):
         """Process pending gauge updates (plots removed)."""
