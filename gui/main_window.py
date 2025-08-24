@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QLineEdit, QMessageBox, QFormLayout,
                             QFrame, QGridLayout, QComboBox)
-from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal
+from PyQt6.QtCore import QThread, QTimer, QPropertyAnimation, QRect, pyqtSignal, Qt
 
 from communication.zmq_worker import ZMQWorker
 from widgets.gauges import RoundGauge, GaugeConfig, ModernGauge, NeonGauge
@@ -59,17 +59,13 @@ class CANDashboardMainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        # Plotting removed – no plot data structures needed
         self.gauges = {}  # Store gauge references
-
         # Performance optimization: gauge-only (plots removed)
         self.pending_gauge_updates = {}
         self.last_gauge_update_time = {}
         self.gauge_update_interval = GAUGE_UPDATE_INTERVAL
-
         # Critical signals that get immediate updates (bypass buffering)
         self.critical_signals = {"rpm", "engine_rpm", "engine_speed", "speed", "vehicle_speed"}
-
         # Define gauge configurations
         self.gauge_configs = [
             GaugeConfig("Engine RPM", 0, 6500, ["rpm", "engine_rpm", "engine_speed"], 14, "RPM"),
@@ -79,6 +75,8 @@ class CANDashboardMainWindow(QMainWindow):
             GaugeConfig("Battery Voltage", 10, 16, ["battery_voltage", "voltage"], 7, "V"),
             GaugeConfig("Oil Pressure", 0, 100, ["oil", "oil_psi"], 6, "PSI"),
         ]
+        # Enable multitouch events
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
 
         # Initialize layout manager
         self.layout_manager = LayoutManager()
@@ -416,3 +414,33 @@ class CANDashboardMainWindow(QMainWindow):
         except Exception as e:
             print(f"Error during shutdown: {e}")
             event.accept()
+
+    def event(self, event):
+        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtWidgets import QApplication
+        if event.type() in (event.Type.TouchBegin, event.Type.TouchUpdate):
+            touch_points = event.points()  # PyQt6 uses points()
+            if len(touch_points) == 1:
+                pos = touch_points[0].position()
+                widget = self.childAt(pos.toPoint())
+                if widget:
+                    mouse_event = QMouseEvent(QMouseEvent.Type.MouseButtonPress, pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(widget, mouse_event)
+                    mouse_release = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(widget, mouse_release)
+                return True
+            elif len(touch_points) == 2:
+                pos1 = touch_points[0].position()
+                pos2 = touch_points[1].position()
+                avg_x = (pos1.x() + pos2.x()) / 2
+                avg_y = (pos1.y() + pos2.y()) / 2
+                avg_qpointf = QPointF(avg_x, avg_y)
+                widget = self.childAt(QPointF(avg_x, avg_y).toPoint())
+                if widget:
+                    mouse_event = QMouseEvent(QMouseEvent.Type.MouseButtonPress, avg_qpointf, Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(widget, mouse_event)
+                    mouse_release = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, avg_qpointf, Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(widget, mouse_release)
+                return True
+        return super().event(event)
