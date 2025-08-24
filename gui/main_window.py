@@ -135,7 +135,7 @@ class CANDashboardMainWindow(QMainWindow):
 
     def _setup_layout_controls(self):
         """Set up layout switching controls."""
-        # Create layout control widget
+        # Hide the layout dropdown but keep it functional for safety
         layout_control_widget = QWidget()
         layout_control_layout = QHBoxLayout(layout_control_widget)
         
@@ -158,6 +158,9 @@ class CANDashboardMainWindow(QMainWindow):
         layout_control_layout.addWidget(layout_label)
         layout_control_layout.addWidget(self.layout_combo)
         layout_control_layout.addStretch()  # Push everything to the left
+        
+        # Hide the layout control widget but keep it in the layout
+        layout_control_widget.setVisible(False)
         
         # Add to main layout
         self.main_layout.addWidget(layout_control_widget)
